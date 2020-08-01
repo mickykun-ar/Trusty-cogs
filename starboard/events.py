@@ -1,7 +1,7 @@
 import discord
 import logging
 
-from typing import List, cast, Dict
+from typing import List, cast, Dict, Union
 
 from redbot.core.bot import Red
 from redbot.core import Config, commands
@@ -63,10 +63,14 @@ class StarboardEvents:
         text_msg += _("{msg} Starboard {name}\n").format(msg=msg, name=starboard.name)
         return (embed, text_msg)
 
-    async def _check_roles(self, starboard: StarboardEntry, member: discord.Member) -> bool:
+    async def _check_roles(
+        self, starboard: StarboardEntry, member: Union[discord.Member, discord.User]
+    ) -> bool:
         """Checks if the user is allowed to add to the starboard
            Allows bot owner to always add messages for testing
            disallows users from adding their own messages"""
+        if isinstance(member, discord.User):
+            return True
         user_roles = set([role.id for role in member.roles])
         if starboard.whitelist_role:
             for role in starboard.whitelist_role:
@@ -83,7 +87,9 @@ class StarboardEvents:
 
         return True
 
-    async def _check_channel(self, starboard: StarboardEntry, channel: discord.TextChannel) -> bool:
+    async def _check_channel(
+        self, starboard: StarboardEntry, channel: discord.TextChannel
+    ) -> bool:
         """CHecks if the channel is allowed to track starboard
         messages"""
         if starboard.whitelist_channel:
@@ -105,13 +111,13 @@ class StarboardEvents:
     ) -> discord.Embed:
         channel = cast(discord.TextChannel, message.channel)
         author = message.author
-        if message.embeds != []:
+        if message.embeds:
             em = message.embeds[0]
-            if message.content != "":
+            if message.system_content:
                 if em.description != discord.Embed.Empty:
-                    em.description = "{}\n\n{}".format(message.content, em.description)[:2048]
+                    em.description = "{}\n\n{}".format(message.system_content, em.description)[:2048]
                 else:
-                    em.description = message.content
+                    em.description = message.system_content
                 if not author.bot:
                     em.set_author(
                         name=author.display_name,
@@ -126,7 +132,7 @@ class StarboardEvents:
                 em.color = await self._get_colour(channel)
             else:
                 em.color = discord.Colour(starboard.colour)
-            em.description = message.content
+            em.description = message.system_content
             em.set_author(
                 name=author.display_name, url=message.jump_url, icon_url=str(author.avatar_url)
             )
@@ -212,6 +218,8 @@ class StarboardEvents:
         for name, starboard in self.starboards[guild.id].items():
             # starboard = StarboardEntry.from_json(s_board)
             star_channel = self.bot.get_channel(starboard.channel)
+            if not star_channel:
+                continue
             await self._loop_messages(payload, starboard, star_channel, msg)
 
     async def _update_stars(self, payload: discord.RawReactionActionEvent) -> None:
@@ -285,7 +293,10 @@ class StarboardEvents:
         star_channel: discord.TextChannel,
         message: discord.Message,
     ):
-        guild = star_channel.guild
+        try:
+            guild = star_channel.guild
+        except AttributeError:
+            return
         for messages in (StarboardMessage.from_json(m) for m in starboard.messages):
             same_message = messages.original_message == message.id
             same_channel = messages.original_channel == payload.channel_id

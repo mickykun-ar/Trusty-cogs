@@ -34,6 +34,7 @@ class CartAlert(MixinMeta):
                 _("{role} will now receive notifications on carts.").format(role=role.name)
             )
 
+    @commands.guild_only()
     @cartalert.command(name="add", aliases=["user", "users", "remove", "rem", "toggle"])
     async def cart_users(self, ctx: commands.Context) -> None:
         """Toggle cart notifications on this server"""
@@ -64,13 +65,13 @@ class CartAlert(MixinMeta):
             async with self.config.guild(ctx.guild).cart_users() as data:
                 data.remove(user_id)
             await ctx.send(
-                _("{user_id} will no longer receive notifications on adventures.").format(
+                _("{user_id} will no longer receive notifications on carts.").format(
                     user_id=user_id
                 )
             )
         else:
             await ctx.send(
-                _("{user_id} is not receiving notifications on adventures.").format(
+                _("{user_id} is not receiving notifications on carts.").format(
                     user_id=user_id
                 )
             )

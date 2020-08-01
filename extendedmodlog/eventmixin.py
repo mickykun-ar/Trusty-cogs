@@ -6,8 +6,8 @@ import logging
 from discord.ext.commands.converter import Converter
 from discord.ext.commands.errors import BadArgument
 
+from redbot.core import commands, Config, modlog, VersionInfo, version_info
 from redbot.core.bot import Red
-from redbot.core import commands, Config, modlog
 from redbot.core.i18n import Translator, cog_i18n
 from redbot.core.utils.chat_formatting import humanize_list, inline, escape
 
@@ -238,7 +238,7 @@ class EventMixin:
         if embed_links:
             embed = discord.Embed(
                 description=message.content,
-                colour=await self.get_colour(channel),
+                colour=await self.get_event_colour(guild, "commands_used"),
                 timestamp=time,
             )
             embed.add_field(name=_("Channel"), value=message.channel.mention)
@@ -438,7 +438,10 @@ class EventMixin:
 
     async def invite_links_loop(self) -> None:
         """Check every 5 minutes for updates to the invite links"""
-        await self.bot.wait_until_ready()
+        if version_info >= VersionInfo.from_str("3.2.0"):
+            await self.bot.wait_until_red_ready()
+        else:
+            await self.bot.wait_until_ready()
         while self is self.bot.get_cog("ExtendedModLog"):
             for guild_id in self.settings:
                 guild = self.bot.get_guild(guild_id)
@@ -800,7 +803,7 @@ class EventMixin:
         embed.add_field(name=_("Type"), value=channel_type)
         if perp:
             perp_msg = _("by {perp} (`{perp_id}`)").format(perp=perp, perp_id=perp.id)
-            embed.add_field(name=_("Created by "), value=perp.mention)
+            embed.add_field(name=_("Deleted by "), value=perp.mention)
         if reason:
             perp_msg += _(" Reason: {reason}").format(reason=reason)
             embed.add_field(name=_("Reason "), value=reason)
@@ -1556,7 +1559,6 @@ class EventMixin:
             before_attr = getattr(before, attr)
             after_attr = getattr(after, attr)
             if before_attr != after_attr:
-                worth_sending = True
                 if attr == "roles":
                     b = set(before.roles)
                     a = set(after.roles)
@@ -1566,10 +1568,12 @@ class EventMixin:
                         for role in before_roles:
                             msg += role.name + _(" Role Removed.")
                             embed.description = role.mention + _(" Role removed.")
+                            worth_sending = True
                     if after_roles:
                         for role in after_roles:
                             msg += role.name + _(" Role Applied.")
                             embed.description = role.mention + _(" Role applied.")
+                            worth_sending = True
                     if channel.permissions_for(guild.me).view_audit_log:
                         action = discord.AuditLogAction.member_role_update
                         async for log in guild.audit_logs(limit=5, action=action):
@@ -1587,6 +1591,7 @@ class EventMixin:
                                 if log.reason:
                                     reason = log.reason
                                 break
+                    worth_sending = True
                     msg += _("Before ") + f"{name} {before_attr}\n"
                     msg += _("After ") + f"{name} {after_attr}\n"
                     embed.add_field(name=_("Before ") + name, value=str(before_attr)[:1024])
@@ -1628,12 +1633,16 @@ class EventMixin:
             "channel": _("Channel:"),
             "max_uses": _("Max Uses:"),
         }
+        try:
+            invite_time = invite.created_at.strftime("%H:%M:%S")
+        except AttributeError:
+            invite_time = datetime.datetime.utcnow().strftime("%H:%M:%S")
         msg = _("{emoji} `{time}` Invite created ").format(
-            emoji=self.settings[guild.id]["invite_created"]["emoji"],
-            time=invite.created_at.strftime("%H:%M:%S"),
+            emoji=self.settings[guild.id]["invite_created"]["emoji"], time=invite_time,
         )
         embed = discord.Embed(
-            title=_("Invite Created"), colour=await self.get_event_colour(guild, "invite_created")
+            title=_("Invite Created"),
+            colour=await self.get_event_colour(guild, "invite_created")
         )
         worth_updating = False
         for attr, name in invite_attrs.items():
@@ -1674,12 +1683,16 @@ class EventMixin:
             "max_uses": _("Max Uses: "),
             "uses": _("Used: "),
         }
+        try:
+            invite_time = invite.created_at.strftime("%H:%M:%S")
+        except AttributeError:
+            invite_time = datetime.datetime.utcnow().strftime("%H:%M:%S")
         msg = _("{emoji} `{time}` Invite deleted ").format(
-            emoji=self.settings[guild.id]["invite_deleted"]["emoji"],
-            time=invite.created_at.strftime("%H:%M:%S"),
+            emoji=self.settings[guild.id]["invite_deleted"]["emoji"], time=invite_time,
         )
         embed = discord.Embed(
-            title=_("Invite Deleted"), colour=await self.get_event_colour(guild, "invite_deleted")
+            title=_("Invite Deleted"),
+            colour=await self.get_event_colour(guild, "invite_deleted")
         )
         worth_updating = False
         for attr, name in invite_attrs.items():

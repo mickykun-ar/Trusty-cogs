@@ -35,6 +35,7 @@ class MultiResponse(Converter):
             "filter",
             "delete",
             "react",
+            "rename",
             "command",
             "mock",
         ]
@@ -78,12 +79,18 @@ class MultiResponse(Converter):
                 raise BadArgument(_("Not creating trigger."))
             if not pred.result:
                 raise BadArgument(_("Not creating trigger."))
+
+        def author_perms(ctx: commands.Context, role: discord.Role) -> bool:
+            if ctx.author.id == ctx.guild.owner.id:
+                return True
+            return role < ctx.author.top_role
+
         if result[0] in ["add_role", "remove_role"]:
             good_roles = []
             for r in result[1:]:
                 try:
                     role = await RoleConverter().convert(ctx, r)
-                    if role < ctx.guild.me.top_role and role < ctx.author.top_role:
+                    if role < ctx.guild.me.top_role and author_perms(ctx, role):
                         good_roles.append(role.id)
                 except BadArgument:
                     log.error("Role `{}` not found.".format(r))
@@ -123,43 +130,111 @@ class Trigger:
     ignore_commands: bool
     ignore_edits: bool
     ocr_search: bool
+    delete_after: int
 
-    def __init__(
-        self,
-        name: str,
-        regex: str,
-        response_type: list,
-        author: int,
-        count: int,
-        image: Union[List[Union[int, str]], str, None],
-        text: Union[List[Union[int, str]], str, None],
-        whitelist: list,
-        blacklist: list,
-        cooldown: dict,
-        multi_payload: Union[List[MultiResponse], Tuple[MultiResponse, ...]],
-        created_at: int,
-        ignore_commands: bool = False,
-        ignore_edits: bool = False,
-        ocr_search: bool = False,
-    ):
+    def __init__(self, name, regex, response_type, author, **kwargs):
         self.name = name
         self.regex = re.compile(regex)
         self.response_type = response_type
         self.author = author
-        self.count = count
-        self.image = image
-        self.text = text
-        self.whitelist = whitelist
-        self.blacklist = blacklist
-        self.cooldown = cooldown
-        self.multi_payload = multi_payload
-        self.created_at = created_at
-        self.ignore_commands = ignore_commands
-        self.ignore_edits = ignore_edits
-        self.ocr_search = ocr_search
+        self.enabled = kwargs.get("enabled", True)
+        self.count = kwargs.get("count", 0)
+        self.image = kwargs.get("image", None)
+        self.text = kwargs.get("text", None)
+        self.whitelist = kwargs.get("whitelist", [])
+        self.blacklist = kwargs.get("blacklist", [])
+        self.cooldown = kwargs.get("cooldown", {})
+        self.multi_payload = kwargs.get("multi_payload", [])
+        self.created_at = kwargs.get("created_at", 0)
+        self.ignore_commands = kwargs.get("ignore_commands", False)
+        self.ignore_edits = kwargs.get("ignore_edits", False)
+        self.ocr_search = kwargs.get("ocr_search", False)
+        self.delete_after = kwargs.get("delete_after", None)
 
     def __str__(self):
-        return self.name
+        """This is defined moreso for debugging purposes but may prove useful for elaborating
+        what is defined for each trigger individually"""
+        info = _(
+            "__Name__: **{name}** \n"
+            "__Active__: **{enabled}**\n"
+            "__Author__: {author}\n"
+            "__Count__: **{count}**\n"
+            "__Response__: **{response}**\n"
+        ).format(
+            name=self.name,
+            enabled=self.enabled,
+            author=self.author,
+            count=self.count,
+            response=self.response_type,
+        )
+        if self.ignore_commands:
+            info += _("Ignore commands: **{ignore}**\n").format(ignore=self.ignore_commands)
+        if "text" in self.response_type:
+            if self.multi_payload:
+                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "text")
+            else:
+                response = self.text
+            info += _("__Text__: ") + "**{response}**\n".format(response=response)
+        if "rename" in self.response_type:
+            if self.multi_payload:
+                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "text")
+            else:
+                response = self.text
+            info += _("__Rename__: ") + "**{response}**\n".format(response=response)
+        if "dm" in self.response_type:
+            if self.multi_payload:
+                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "dm")
+            else:
+                response = self.text
+            info += _("__DM__: ") + "**{response}**\n".format(response=response)
+        if "command" in self.response_type:
+            if self.multi_payload:
+                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "command")
+            else:
+                response = self.text
+            info += _("__Command__: ") + "**{response}**\n".format(response=response)
+        if "react" in self.response_type:
+            if self.multi_payload:
+                emoji_response = [r for t in self.multi_payload for r in t[1:] if t[0] == "react"]
+            else:
+                emoji_response = self.text
+            server_emojis = "".join(f"<{e}>" for e in emoji_response if len(e) > 5)
+            unicode_emojis = "".join(e for e in emoji_response if len(e) < 5)
+            info += _("__Emojis__: ") + server_emojis + unicode_emojis + "\n"
+        if "add_role" in self.response_type:
+            if self.multi_payload:
+                role_response = [
+                    r for t in self.multi_payload for r in t[1:] if t[0] == "add_role"
+                ]
+            else:
+                role_response = self.text
+            if role_response:
+                info += _("__Roles Added__: ") + role_response + "\n"
+        if "remove_role" in self.response_type:
+            if self.multi_payload:
+                role_response = [
+                    r for t in self.multi_payload for r in t[1:] if t[0] == "remove_role"
+                ]
+            else:
+                role_response = self.text
+            if role_response:
+                info += _("__Roles Removed__: ") + role_response + "\n"
+        if self.whitelist:
+            info += _("__Whitelist__: ") + self.whitelist + "\n"
+        if self.blacklist:
+            info += _("__Blacklist__: ") + self.blacklist + "\n"
+        if self.cooldown:
+            time = self.cooldown["time"]
+            style = self.cooldown["style"]
+            info += _("Cooldown: ") + "**{}s per {}**\n".format(time, style)
+        if self.ocr_search:
+            info += _("OCR: **Enabled**\n")
+        if self.ignore_edits:
+            info += _("Ignoring edits: **Enabled**\n")
+        if self.delete_after:
+            info += _("Message deleted after: {time} seconds.\n").format(time=self.delete_after)
+        info += _("__Regex__: ") + self.regex.pattern
+        return info
 
     async def to_json(self) -> dict:
         return {
@@ -167,6 +242,7 @@ class Trigger:
             "regex": self.regex.pattern,
             "response_type": self.response_type,
             "author": self.author,
+            "enabled": self.enabled,
             "count": self.count,
             "image": self.image,
             "text": self.text,
@@ -178,6 +254,7 @@ class Trigger:
             "ignore_commands": self.ignore_commands,
             "ignore_edits": self.ignore_edits,
             "ocr_search": self.ocr_search,
+            "delete_after": self.delete_after,
         }
 
     @classmethod
@@ -188,6 +265,8 @@ class Trigger:
         ignore_commands = False
         ignore_edits = False
         ocr_search = False
+        delete_after = None
+        enabled = True
         if "cooldown" in data:
             cooldown = data["cooldown"]
         if type(data["response_type"]) is str:
@@ -204,22 +283,28 @@ class Trigger:
             ignore_edits = data["ignore_edits"]
         if "ocr_search" in data:
             ocr_search = data["ocr_search"]
+        if "delete_after" in data:
+            delete_after = data["delete_after"]
+        if "enabled" in data:
+            enabled = data["enabled"]
         return cls(
             data["name"],
             data["regex"],
             response_type,
             data["author"],
-            data["count"],
-            data["image"],
-            data["text"],
-            data["whitelist"],
-            data["blacklist"],
-            cooldown,
-            multi_payload,
-            created_at,
-            ignore_commands,
-            ignore_edits,
-            ocr_search,
+            count=data["count"],
+            enabled=enabled,
+            image=data["image"],
+            text=data["text"],
+            whitelist=data["whitelist"],
+            blacklist=data["blacklist"],
+            cooldown=cooldown,
+            multi_payload=multi_payload,
+            created_at=created_at,
+            delete_after=delete_after,
+            ignore_commands=ignore_commands,
+            ignore_edits=ignore_edits,
+            ocr_search=ocr_search,
         )
 
 

@@ -17,7 +17,7 @@ from redbot.core.bot import Red
 from redbot.core import commands, Config, modlog
 from redbot.core.i18n import Translator
 from redbot.core.data_manager import cog_data_path
-from redbot.core.utils.chat_formatting import humanize_list, box, escape
+from redbot.core.utils.chat_formatting import humanize_list, box, escape, pagify
 
 from discord.ext.commands.errors import BadArgument
 
@@ -286,9 +286,13 @@ class TriggerHandler:
         msg_list = []
         embeds = ctx.channel.permissions_for(ctx.me).embed_links
         page = 1
+        good = "\N{WHITE HEAVY CHECK MARK}"
+        bad = "\N{CROSS MARK}"
         for triggers in trigger_list:
             trigger = await Trigger.from_json(triggers)
             author = ctx.guild.get_member(trigger.author)
+            active_triggers = [t.name for t in self.triggers[ctx.guild.id]]
+            log.info(active_triggers)
             if not author:
                 try:
                     author = await self.bot.fetch_user(trigger.author)
@@ -314,23 +318,33 @@ class TriggerHandler:
                 whitelist_s = ", ".join(x.mention for x in whitelist)
             else:
                 whitelist_s = ", ".join(x.name for x in whitelist)
-            responses = ", ".join(r for r in trigger.response_type)
+            if trigger.response_type:
+                responses = humanize_list(trigger.response_type)
+            else:
+                responses = _("This trigger has no actions and should be removed.")
+
             info = _(
-                "Name: **{name}** \n"
-                "Author: {author}\n"
-                "Count: **{count}**\n"
-                "Response: **{response}**\n"
+                "__Name__: **{name}** \n"
+                "__Active__: **{enabled}**\n"
+                "__Author__: {author}\n"
+                "__Count__: **{count}**\n"
+                "__Response__: **{response}**\n"
             )
             if embeds:
                 info = info.format(
                     name=trigger.name,
+                    enabled=good if trigger.name in active_triggers else bad,
                     author=author.mention,
                     count=trigger.count,
                     response=responses,
                 )
             else:
                 info = info.format(
-                    name=trigger.name, author=author.name, count=trigger.count, response=responses
+                    name=trigger.name,
+                    enabled=good if trigger.name in active_triggers else bad,
+                    author=author.name,
+                    count=trigger.count,
+                    response=responses,
                 )
             if trigger.ignore_commands:
                 info += _("Ignore commands: **{ignore}**\n").format(ignore=trigger.ignore_commands)
@@ -339,19 +353,25 @@ class TriggerHandler:
                     response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "text")
                 else:
                     response = trigger.text
-                info += _("Text: ") + "**{response}**\n".format(response=response)
+                info += _("__Text__: ") + "**{response}**\n".format(response=response)
+            if "rename" in trigger.response_type:
+                if trigger.multi_payload:
+                    response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "text")
+                else:
+                    response = trigger.text
+                info += _("__Rename__: ") + "**{response}**\n".format(response=response)
             if "dm" in trigger.response_type:
                 if trigger.multi_payload:
                     response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "dm")
                 else:
                     response = trigger.text
-                info += _("DM: ") + "**{response}**\n".format(response=response)
+                info += _("__DM__: ") + "**{response}**\n".format(response=response)
             if "command" in trigger.response_type:
                 if trigger.multi_payload:
                     response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "command")
                 else:
                     response = trigger.text
-                info += _("Command: ") + "**{response}**\n".format(response=response)
+                info += _("__Command__: ") + "**{response}**\n".format(response=response)
             if "react" in trigger.response_type:
                 if trigger.multi_payload:
                     emoji_response = [
@@ -361,7 +381,7 @@ class TriggerHandler:
                     emoji_response = trigger.text
                 server_emojis = "".join(f"<{e}>" for e in emoji_response if len(e) > 5)
                 unicode_emojis = "".join(e for e in emoji_response if len(e) < 5)
-                info += _("Emojis: ") + server_emojis + unicode_emojis + "\n"
+                info += _("__Emojis__: ") + server_emojis + unicode_emojis + "\n"
             if "add_role" in trigger.response_type:
                 if trigger.multi_payload:
                     role_response = [
@@ -375,7 +395,7 @@ class TriggerHandler:
                 else:
                     roles_list = [r.name for r in roles if r is not None]
                 if roles_list:
-                    info += _("Roles Added: ") + humanize_list(roles_list) + "\n"
+                    info += _("__Roles Added__: ") + humanize_list(roles_list) + "\n"
                 else:
                     info += _("Roles Added: Deleted Roles\n")
             if "remove_role" in trigger.response_type:
@@ -391,13 +411,13 @@ class TriggerHandler:
                 else:
                     roles_list = [r.name for r in roles if r is not None]
                 if roles_list:
-                    info += _("Roles Removed: ") + humanize_list(roles_list) + "\n"
+                    info += _("__Roles Removed__: ") + humanize_list(roles_list) + "\n"
                 else:
-                    info += _("Roles Added: Deleted Roles\n")
+                    info += _("__Roles Added__: Deleted Roles\n")
             if whitelist_s:
-                info += _("Whitelist: ") + whitelist_s + "\n"
+                info += _("__Whitelist__: ") + whitelist_s + "\n"
             if blacklist_s:
-                info += _("Blacklist: ") + blacklist_s + "\n"
+                info += _("__Blacklist__: ") + blacklist_s + "\n"
             if trigger.cooldown:
                 time = trigger.cooldown["time"]
                 style = trigger.cooldown["style"]
@@ -406,12 +426,16 @@ class TriggerHandler:
                 info += _("OCR: **Enabled**\n")
             if trigger.ignore_edits:
                 info += _("Ignoring edits: **Enabled**\n")
-            info += _("Regex: ") + box(trigger.regex.pattern[: 2000 - len(info)], lang="bf")
+            if trigger.delete_after:
+                info += _("Message deleted after: {time} seconds.\n").format(
+                    time=trigger.delete_after
+                )
+
             if embeds:
+                info += _("__Regex__: ") + box(trigger.regex.pattern, lang="bf")
                 em = discord.Embed(
                     timestamp=ctx.message.created_at,
                     colour=await ctx.embed_colour(),
-                    description=info,
                     title=_("Triggers for {guild}").format(guild=ctx.guild.name),
                 )
                 em.set_author(name=author, icon_url=author.avatar_url)
@@ -426,8 +450,17 @@ class TriggerHandler:
                         )
                     )
                     em.timestamp = discord.utils.snowflake_time(trigger.created_at)
+
+                first = True
+                for pages in pagify(info, page_length=1024):
+                    if first:
+                        em.description = pages
+                        first = False
+                    else:
+                        em.add_field(name=_("Trigger info continued"), value=pages)
                 msg_list.append(em)
             else:
+                info += _("Regex: ") + box(trigger.regex.pattern[: 2000 - len(info)], lang="bf")
                 msg_list.append(info)
             page += 1
         return msg_list
@@ -541,6 +574,8 @@ class TriggerHandler:
             # trigger = await Trigger.from_json(trigger_list[triggers])
             # except Exception:
             # continue
+            if not trigger.enabled:
+                continue
             if edit and trigger.ignore_edits:
                 continue
 
@@ -688,7 +723,9 @@ class TriggerHandler:
         else:
             return (True, search)
 
-    async def perform_trigger(self, message: discord.Message, trigger: Trigger, find: List[str]) -> None:
+    async def perform_trigger(
+        self, message: discord.Message, trigger: Trigger, find: List[str]
+    ) -> None:
 
         guild: discord.Guild = cast(discord.Guild, message.guild)
         channel: discord.TextChannel = cast(discord.TextChannel, message.channel)
@@ -721,11 +758,11 @@ class TriggerHandler:
                 text_response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "text")
             else:
                 text_response = str(trigger.text)
-            response = await self.convert_parms(message, text_response, trigger.regex)
+            response = await self.convert_parms(message, text_response, trigger)
             if response and not channel.permissions_for(author).mention_everyone:
                 response = escape(response, mass_mentions=True)
             try:
-                await channel.send(response)
+                await channel.send(response, delete_after=trigger.delete_after)
             except discord.errors.Forbidden:
                 log.debug(error_in, exc_info=True)
             except Exception:
@@ -734,9 +771,7 @@ class TriggerHandler:
         if "randtext" in trigger.response_type and own_permissions.send_messages:
             await channel.trigger_typing()
             rand_text_response: str = random.choice(trigger.text)
-            crand_text_response = await self.convert_parms(
-                message, rand_text_response, trigger.regex
-            )
+            crand_text_response = await self.convert_parms(message, rand_text_response, trigger)
             if crand_text_response and not channel.permissions_for(author).mention_everyone:
                 crand_text_response = escape(crand_text_response, mass_mentions=True)
             try:
@@ -753,7 +788,7 @@ class TriggerHandler:
             image_text_response = trigger.text
             if image_text_response:
                 image_text_response = await self.convert_parms(
-                    message, image_text_response, trigger.regex
+                    message, image_text_response, trigger
                 )
             if image_text_response and not channel.permissions_for(author).mention_everyone:
                 image_text_response = escape(image_text_response, mass_mentions=True)
@@ -772,7 +807,7 @@ class TriggerHandler:
             rimage_text_response = trigger.text
             if rimage_text_response:
                 rimage_text_response = await self.convert_parms(
-                    message, rimage_text_response, trigger.regex
+                    message, rimage_text_response, trigger
                 )
 
             if rimage_text_response and not channel.permissions_for(author).mention_everyone:
@@ -789,7 +824,7 @@ class TriggerHandler:
                 dm_response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "dm")
             else:
                 dm_response = str(trigger.text)
-            response = await self.convert_parms(message, dm_response, trigger.regex)
+            response = await self.convert_parms(message, dm_response, trigger)
             try:
                 await author.send(response)
             except discord.errors.Forbidden:
@@ -802,7 +837,7 @@ class TriggerHandler:
                 dm_response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "dmme")
             else:
                 dm_response = str(trigger.text)
-            response = await self.convert_parms(message, dm_response, trigger.regex)
+            response = await self.convert_parms(message, dm_response, trigger)
             try:
                 trigger_author = await self.bot.fetch_user(trigger.author)
             except AttributeError:
@@ -828,6 +863,28 @@ class TriggerHandler:
                 try:
                     await message.add_reaction(emoji)
                 except (discord.errors.Forbidden, discord.errors.NotFound):
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
+
+        if "rename" in trigger.response_type and own_permissions.manage_nicknames:
+            if author == guild.owner:
+                # Don't want to accidentally kick the bot owner
+                # or try to kick the guild owner
+                return
+            if guild.me.top_role > author.top_role:
+                if trigger.multi_payload:
+                    text_response = "\n".join(
+                        t[1] for t in trigger.multi_payload if t[0] == "rename"
+                    )
+                else:
+                    text_response = str(trigger.text)
+                response = await self.convert_parms(message, text_response, trigger)
+                if response and not channel.permissions_for(author).mention_everyone:
+                    response = escape(response, mass_mentions=True)
+                try:
+                    await author.edit(nick=response[:32], reason=reason)
+                except discord.errors.Forbidden:
                     log.debug(error_in, exc_info=True)
                 except Exception:
                     log.error(error_in, exc_info=True)
@@ -908,14 +965,14 @@ class TriggerHandler:
             if trigger.multi_payload:
                 command_response = [t[1] for t in trigger.multi_payload if t[0] == "command"]
                 for command in command_response:
-                    command = await self.convert_parms(message, command, trigger.regex)
+                    command = await self.convert_parms(message, command, trigger)
                     msg = copy(message)
                     prefix_list = await self.bot.command_prefix(self.bot, message)
                     msg.content = prefix_list[0] + command
                     self.bot.dispatch("message", msg)
             else:
                 msg = copy(message)
-                command = await self.convert_parms(message, str(trigger.text), trigger.regex)
+                command = await self.convert_parms(message, str(trigger.text), trigger)
                 prefix_list = await self.bot.command_prefix(self.bot, message)
                 msg.content = prefix_list[0] + command
                 self.bot.dispatch("message", msg)
@@ -923,7 +980,7 @@ class TriggerHandler:
             if trigger.multi_payload:
                 mock_response = [t[1] for t in trigger.multi_payload if t[0] == "mock"]
                 for command in mock_response:
-                    command = await self.convert_parms(message, command, trigger.regex)
+                    command = await self.convert_parms(message, command, trigger)
                     msg = copy(message)
                     mocker = guild.get_member(trigger.author)
                     if not mocker:
@@ -935,7 +992,7 @@ class TriggerHandler:
             else:
                 msg = copy(message)
                 mocker = guild.get_member(trigger.author)
-                command = await self.convert_parms(message, str(trigger.text), trigger.regex)
+                command = await self.convert_parms(message, str(trigger.text), trigger)
                 if not mocker:
                     return  # We'll exit early if the author isn't on the server anymore
                 msg.author = mocker
@@ -958,7 +1015,7 @@ class TriggerHandler:
                 log.error(error_in, exc_info=True)
 
     async def convert_parms(
-        self, message: discord.Message, raw_response: str, regex_replace: Pattern
+        self, message: discord.Message, raw_response: str, trigger: Trigger
     ) -> str:
         # https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/develop/redbot/cogs/customcom/customcom.py
         # ctx = await self.bot.get_context(message)
@@ -969,7 +1026,7 @@ class TriggerHandler:
         results = RE_POS.findall(raw_response)
         if results:
             for result in results:
-                search = regex_replace.search(message.content)
+                search = trigger.regex.search(message.content)
                 if not search:
                     continue
                 try:
@@ -983,6 +1040,11 @@ class TriggerHandler:
                         f"Retrigger Encountered an error converting parameters", exc_info=True
                     )
                     continue
+        raw_response = raw_response.replace("{count}", str(trigger.count))
+        if hasattr(message.channel, "guild"):
+            prefixes = await self.bot.get_prefix(message.channel)
+            raw_response = raw_response.replace("[p]", prefixes[0])
+            raw_response = raw_response.replace("[pp]", humanize_list(prefixes))
         return raw_response
         # await ctx.send(raw_response)
 
