@@ -1,17 +1,15 @@
-import aiohttp
-import discord
-import chatterbot
-import functools
 import asyncio
+import functools
 import re
 
-
-from chatterbot.trainers import ListTrainer
+import aiohttp
+import chatterbot
+import discord
 from chatterbot import ChatBot
-from chatterbot.response_selection import get_first_response
 from chatterbot.comparisons import levenshtein_distance
-
-from redbot.core import commands, checks, Config
+from chatterbot.response_selection import get_first_response
+from chatterbot.trainers import ListTrainer
+from redbot.core import Config, checks, commands
 from redbot.core.data_manager import cog_data_path
 
 LINK_REGEX = re.compile(
@@ -21,7 +19,7 @@ LINK_REGEX = re.compile(
 
 class Chatter(commands.Cog):
     """
-        Train the bot to speak automatically by watching guilds
+    Train the bot to speak automatically by watching guilds
     """
 
     def __init__(self, bot):
@@ -84,7 +82,7 @@ class Chatter(commands.Cog):
 
     async def train_message(self, message):
         """
-            This will handle training the bot on messages
+        This will handle training the bot on messages
         """
         last_author = await self.config.channel(channel).author()
         last_message = await self.config.channel(channel).message()
@@ -103,7 +101,7 @@ class Chatter(commands.Cog):
 
     async def respond_message(self, message):
         """
-            This will handle responding with a message
+        This will handle responding with a message
         """
         pass
 

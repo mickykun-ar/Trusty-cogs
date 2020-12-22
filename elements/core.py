@@ -1,16 +1,13 @@
-import discord
-import aiohttp
 import logging
-
-from redbot.core import commands
-from redbot.core.utils.menus import menu, DEFAULT_CONTROLS
-
-from discord.ext.commands.converter import Converter
-from discord.ext.commands.errors import BadArgument
-
 from typing import List, Tuple
 
+import aiohttp
+import discord
+from discord.ext.commands.converter import Converter
+from discord.ext.commands.errors import BadArgument
 from mendeleev import element as ELEMENTS
+from redbot.core import commands
+from redbot.core.utils.menus import DEFAULT_CONTROLS, menu
 
 from .data import IMAGES, LATTICES, UNITS
 
@@ -71,10 +68,16 @@ class Elements(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     @staticmethod
     def get_lattice_string(element: ELEMENTS) -> str:
@@ -126,11 +129,11 @@ class Elements(commands.Cog):
         measurement: MeasurementConverter = None,
     ) -> None:
         """
-            Display information about an element
+        Display information about an element
 
-            `element` can be the name, symbol or atomic number of the element
-            `measurement` can be any of the Elements data listed here
-            https://mendeleev.readthedocs.io/en/stable/data.html#electronegativities
+        `element` can be the name, symbol or atomic number of the element
+        `measurement` can be any of the Elements data listed here
+        https://mendeleev.readthedocs.io/en/stable/data.html#electronegativities
         """
         if not measurement:
             return await ctx.send(embed=await self.element_embed(element))
@@ -152,10 +155,10 @@ class Elements(commands.Cog):
     @commands.bot_has_permissions(embed_links=True)
     async def elements(self, ctx: commands.Context, *elements: ElementConverter) -> None:
         """
-            Display information about multiple elements
+        Display information about multiple elements
 
-            `elements` can be the name, symbol or atomic number of the element
-            separated by spaces
+        `elements` can be the name, symbol or atomic number of the element
+        separated by spaces
         """
         if not elements:
             elements = [ELEMENTS(e) for e in range(1, 119)]

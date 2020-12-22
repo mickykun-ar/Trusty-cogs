@@ -1,8 +1,10 @@
+import logging
 from datetime import datetime
+
 import aiohttp
 import discord
+
 from .constants import BASE_URL, TEAMS
-import logging
 
 log = logging.getLogger("red.trusty-cogs.Hockey")
 
@@ -71,10 +73,10 @@ class Standings:
     @staticmethod
     async def get_team_standings(style):
         """
-            Creates a list of standings when given a particular style
-            accepts Division names, Conference names, and Team names
-            returns a list of standings objects and the location of the given
-            style in the list
+        Creates a list of standings when given a particular style
+        accepts Division names, Conference names, and Team names
+        returns a list of standings objects and the location of the given
+        style in the list
         """
         async with aiohttp.ClientSession() as session:
             async with session.get(BASE_URL + "/api/v1/standings") as resp:
@@ -137,8 +139,8 @@ class Standings:
     @staticmethod
     async def post_automatic_standings(bot):
         """
-            Automatically update a standings embed with the latest stats
-            run when new games for the day is updated
+        Automatically update a standings embed with the latest stats
+        run when new games for the day is updated
         """
         log.debug("Updating Standings.")
         config = bot.get_cog("Hockey").config
@@ -164,16 +166,20 @@ class Standings:
                     continue
                 try:
                     message = await channel.fetch_message(standings_msg)
-                except AttributeError:
-                    message = await channel.get_message(standings_msg)
-                except discord.errors.NotFound:
+                except (discord.errors.NotFound, discord.errors.Forbidden):
                     await config.guild(guild).post_standings.set(False)
+                    continue
 
                 standings, page = await Standings.get_team_standings(search)
-                if search != "all":
-                    em = await Standings.build_standing_embed(standings, page)
+                team_stats = standings[page]
+
+                if len(standings) >= 2 and len(standings) < 4:
+                    em = await Standings.make_division_standings_embed(team_stats)
+
+                elif len(standings) >= 4 and len(standings) < 31:
+                    em = await Standings.make_conference_standings_embed(team_stats)
                 else:
-                    em = await Standings.all_standing_embed(standings, page)
+                    em = await Standings.all_standing_embed(standings)
                 if message is not None:
                     await message.edit(embed=em)
 
@@ -206,9 +212,9 @@ class Standings:
         )
 
     @staticmethod
-    async def all_standing_embed(post_standings, page=0):
+    async def all_standing_embed(post_standings):
         """
-            Builds the standing embed when all TEAMS are selected
+        Builds the standing embed when all TEAMS are selected
         """
         em = discord.Embed()
         new_dict = {}
@@ -239,89 +245,108 @@ class Standings:
         return em
 
     @staticmethod
-    async def build_standing_embed(post_list, page=0):
-        """
-            Builds the standings type based on number of items in the list
-        """
-        team_stats = post_list[page]
+    async def make_division_standings_embed(team_stats):
         em = discord.Embed()
-        if type(team_stats) is not list:
-            em.set_author(
-                name="# {} {}".format(team_stats.league_rank, team_stats.name),
-                url="https://www.nhl.com/standings",
-                icon_url=TEAMS[team_stats.name]["logo"],
-            )
-            em.colour = int(TEAMS[team_stats.name]["home"].replace("#", ""), 16)
-            em.set_thumbnail(url=TEAMS[team_stats.name]["logo"])
-            em.add_field(name="Division", value="# " + team_stats.division_rank)
-            em.add_field(name="Conference", value="# " + team_stats.conference_rank)
-            em.add_field(name="Wins", value=team_stats.wins)
-            em.add_field(name="Losses", value=team_stats.losses)
-            em.add_field(name="OT", value=team_stats.ot)
-            em.add_field(name="Points", value=team_stats.pts)
-            em.add_field(name="Games Played", value=team_stats.gp)
-            em.add_field(name="Goals Scored", value=team_stats.goals)
-            em.add_field(name="Goals Against", value=team_stats.gaa)
-            em.add_field(
-                name="Current Streak",
-                value="{} {}".format(team_stats.streak, team_stats.streak_type),
-            )
-            # timestamp = datetime.strptime(team_stats.last_updated, "%Y-%m-%dT%H:%M:%SZ")
-            em.timestamp = team_stats.last_updated
-            em.set_footer(text="Stats last Updated", icon_url=TEAMS[team_stats.name]["logo"])
-            return em
-
         msg = ""
         # timestamp = datetime.strptime(team_stats[0].last_updated, "%Y-%m-%dT%H:%M:%SZ")
         em.timestamp = team_stats[0].last_updated
 
-        if len(team_stats) <= 8:
-            for team in team_stats:
-                emoji = TEAMS[team.name]["emoji"]
-                msg += (
-                    f"{team.division_rank}. <:{emoji}> GP: **{team.gp}** "
-                    f"W: **{team.wins}** L: **{team.losses}** OT: "
-                    f"**{team.ot}** PTS: **{team.pts}**\n"
-                )
-            em.description = msg
-            division = team_stats[0].division
-            division_logo = TEAMS["Team {}".format(division)]["logo"]
-            em.colour = int(TEAMS["Team {}".format(division)]["home"].replace("#", ""), 16)
-            em.set_author(
-                name=division + " Division",
-                url="https://www.nhl.com/standings",
-                icon_url=division_logo,
+        for team in team_stats:
+            emoji = TEAMS[team.name]["emoji"]
+            msg += (
+                f"{team.division_rank}. <:{emoji}> GP: **{team.gp}** "
+                f"W: **{team.wins}** L: **{team.losses}** OT: "
+                f"**{team.ot}** PTS: **{team.pts}**\n"
             )
-            em.set_footer(text="Stats last Updated", icon_url=division_logo)
-            em.set_thumbnail(url=division_logo)
-            return em
-        if len(team_stats) > 8 and len(team_stats) <= 16:
-            newteam_stats = sorted(team_stats, key=lambda k: int(k.conference_rank))
-            for team in newteam_stats:
-                emoji = TEAMS[team.name]["emoji"]
-                msg += (
-                    f"{team.conference_rank}. <:{emoji}> GP: **{team.gp}** "
-                    f"W: **{team.wins}** L: **{team.losses}** OT: "
-                    f"**{team.ot}** PTS: **{team.pts}**\n"
-                )
-            em.description = msg
-            conference = team_stats[0].conference
-            em.colour = int("c41230", 16) if conference == "Eastern" else int("003e7e", 16)
-            logo = {
-                "Eastern": (
-                    "https://upload.wikimedia.org/wikipedia/en/thumb/1/"
-                    "16/NHL_Eastern_Conference.svg/1280px-NHL_Eastern_Conference.svg.png"
-                ),
-                "Western": (
-                    "https://upload.wikimedia.org/wikipedia/en/thumb/6/"
-                    "65/NHL_Western_Conference.svg/1280px-NHL_Western_Conference.svg.png"
-                ),
-            }
-            em.set_author(
-                name=conference + " Conference",
-                url="https://www.nhl.com/standings",
-                icon_url=logo[conference],
+        em.description = msg
+        division = team_stats[0].division
+        division_logo = TEAMS["Team {}".format(division)]["logo"]
+        em.colour = int(TEAMS["Team {}".format(division)]["home"].replace("#", ""), 16)
+        em.set_author(
+            name=division + " Division",
+            url="https://www.nhl.com/standings",
+            icon_url=division_logo,
+        )
+        em.set_footer(text="Stats last Updated", icon_url=division_logo)
+        em.set_thumbnail(url=division_logo)
+        return em
+
+    @staticmethod
+    async def make_conference_standings_embed(team_stats):
+        em = discord.Embed()
+        msg = ""
+        newteam_stats = sorted(team_stats, key=lambda k: int(k.conference_rank))
+        for team in newteam_stats:
+            emoji = TEAMS[team.name]["emoji"]
+            msg += (
+                f"{team.conference_rank}. <:{emoji}> GP: **{team.gp}** "
+                f"W: **{team.wins}** L: **{team.losses}** OT: "
+                f"**{team.ot}** PTS: **{team.pts}**\n"
             )
-            em.set_thumbnail(url=logo[conference])
-            em.set_footer(text="Stats last Updated", icon_url=logo[conference])
-            return em
+        em.description = msg
+        conference = team_stats[0].conference
+        em.colour = int("c41230", 16) if conference == "Eastern" else int("003e7e", 16)
+        logo = {
+            "Eastern": (
+                "https://upload.wikimedia.org/wikipedia/en/thumb/1/"
+                "16/NHL_Eastern_Conference.svg/1280px-NHL_Eastern_Conference.svg.png"
+            ),
+            "Western": (
+                "https://upload.wikimedia.org/wikipedia/en/thumb/6/"
+                "65/NHL_Western_Conference.svg/1280px-NHL_Western_Conference.svg.png"
+            ),
+        }
+        em.set_author(
+            name=conference + " Conference",
+            url="https://www.nhl.com/standings",
+            icon_url=logo[conference],
+        )
+        em.set_thumbnail(url=logo[conference])
+        em.set_footer(text="Stats last Updated", icon_url=logo[conference])
+        return em
+
+    @staticmethod
+    async def make_team_standings_embed(team_stats):
+        em = discord.Embed()
+        em.set_author(
+            name="# {} {}".format(team_stats.league_rank, team_stats.name),
+            url="https://www.nhl.com/standings",
+            icon_url=TEAMS[team_stats.name]["logo"],
+        )
+        em.colour = int(TEAMS[team_stats.name]["home"].replace("#", ""), 16)
+        em.set_thumbnail(url=TEAMS[team_stats.name]["logo"])
+        em.add_field(name="Division", value="# " + team_stats.division_rank)
+        em.add_field(name="Conference", value="# " + team_stats.conference_rank)
+        em.add_field(name="Wins", value=team_stats.wins)
+        em.add_field(name="Losses", value=team_stats.losses)
+        em.add_field(name="OT", value=team_stats.ot)
+        em.add_field(name="Points", value=team_stats.pts)
+        em.add_field(name="Games Played", value=team_stats.gp)
+        em.add_field(name="Goals Scored", value=team_stats.goals)
+        em.add_field(name="Goals Against", value=team_stats.gaa)
+        em.add_field(
+            name="Current Streak",
+            value="{} {}".format(team_stats.streak, team_stats.streak_type),
+        )
+        # timestamp = datetime.strptime(team_stats.last_updated, "%Y-%m-%dT%H:%M:%SZ")
+        em.timestamp = team_stats.last_updated
+        em.set_footer(text="Stats last Updated", icon_url=TEAMS[team_stats.name]["logo"])
+        return em
+
+    @staticmethod
+    async def build_standing_embed(post_list, page=0):
+        """
+        Builds the standings type based on number of items in the list
+        """
+        team_stats = post_list[page]
+
+        if not isinstance(team_stats, list):
+            return await Standings.make_team_standings_embed(team_stats)
+
+        elif len(team_stats) >= 7 and len(team_stats) < 16:
+            return await Standings.make_division_standings_embed(team_stats)
+
+        elif len(team_stats) >= 16 and len(team_stats) < 31:
+            return await Standings.make_conference_standings_embed(team_stats)
+        else:
+            return await Standings.all_standing_embed(team_stats)

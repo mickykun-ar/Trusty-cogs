@@ -1,39 +1,50 @@
-import discord
 import json
+import logging
+from typing import List, Literal, Optional
+
 import aiohttp
-
-from tabulate import tabulate
-from typing import Optional, List
-
+import discord
+from redbot.core import Config, commands
 from redbot.core.bot import Red
-from redbot.core import commands
-from redbot.core import Config
-from redbot.core.utils.chat_formatting import pagify, box
-
+from redbot.core.utils.chat_formatting import box, pagify
+from tabulate import tabulate
 
 from .profile import Profile
+
+log = logging.getLogger("red.trusty-cogs.runescape")
 
 
 class Runescape(commands.Cog):
     """
-        Display Runescape account info
+    Display Runescape account info
     """
 
     __author__ = ["TrustyJAID"]
-    __version__ = "1.1.0"
+    __version__ = "1.2.3"
 
     def __init__(self, bot):
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, 1845134845412)
-        default: dict = {"rsn": ""}
+        default: dict = {"rsn": "", "osrsn": ""}
         self.config.register_user(**default)
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ):
+        """
+        Method for finding users data inside the cog and deleting it.
+        """
+        await self.config.user_from_id(user_id).clear()
 
     @commands.group(name="runescape", aliases=["rs"])
     async def runescape(self, ctx: commands.Context):
@@ -47,9 +58,10 @@ class Runescape(commands.Cog):
 
     @osrs.command(name="stats")
     async def osrs_stats(self, ctx: commands.Context, runescape_name: str = None) -> None:
-        user = self.bot.get_user(ctx.message.author.id)
+        """Display a players stats in oldschool Runescape."""
+        await ctx.trigger_typing()
         if runescape_name is None:
-            runescape_name = await self.config.user(user).rsn()
+            runescape_name = await self.config.user(ctx.author).osrsn()
             if runescape_name is None:
                 await ctx.send("You need to set your Runescape name first!")
                 return
@@ -61,12 +73,35 @@ class Runescape(commands.Cog):
         for page in pagify(msg):
             await ctx.send(box(page, lang="css"))
 
+    @osrs.command(name="set")
+    async def osrs_set(
+        self, ctx: commands.Context, *, runescape_name: Optional[str] = None
+    ) -> None:
+        """
+        Set your runescape name for easer commands.
+
+        Use this command without a name to clear your settings.
+        """
+        if not runescape_name:
+            await self.config.user(ctx.author).clear()
+            await ctx.send("Your Runescape name has been cleared.")
+        else:
+            await self.config.user(ctx.author).osrsn.set(runescape_name)
+            await ctx.send("Your Old School Runescape name has been set.")
+
     @runescape.command()
-    async def set(self, ctx: commands.Context, *, RunescapeName: str) -> None:
-        """Set your runescape name for easer commands."""
-        user = self.bot.get_user(ctx.message.author.id)
-        await self.config.user(user).rsn.set(RunescapeName)
-        await ctx.send("Your Runescape name has been set. To change re-do this command.")
+    async def set(self, ctx: commands.Context, *, runescape_name: Optional[str] = None) -> None:
+        """
+        Set your runescape name for easer commands.
+
+        Use this command without a name to clear your settings.
+        """
+        if not runescape_name:
+            await self.config.user(ctx.author).clear()
+            await ctx.send("Your Runescape name has been cleared.")
+        else:
+            await self.config.user(ctx.author).rsn.set(runescape_name)
+            await ctx.send("Your Runescape name has been set. To change re-do this command.")
 
     async def osrs_highscores(self, runescape_name: str) -> str:
         return "https://secure.runescape.com/m=hiscore_oldschool/index_lite.ws?player={}".format(
@@ -81,9 +116,13 @@ class Runescape(commands.Cog):
                 return await resp.read()
 
     async def make_url_profile(self, runescape_name: str, activities: int) -> str:
-        return "https://apps.runescape.com/runemetrics/profile/profile?user={}&activities={}".format(
-            runescape_name, activities
+        url = (
+            "https://apps.runescape.com/runemetrics/profile/profile?user={}&activities={}".format(
+                runescape_name, activities
+            )
         )
+        log.debug(url)
+        return url
 
     async def make_url_player_details(self, runescape_name: str) -> str:
         return "http://services.runescape.com/m=website-data/playerDetails.ws?names=%5B%22{}%22%5D&callback=jQuery000000000000000_0000000000&_=0".format(
@@ -94,9 +133,12 @@ class Runescape(commands.Cog):
         async with aiohttp.ClientSession() as session:
             async with session.get(await self.make_url_player_details(runescape_name)) as resp:
                 data = await resp.text()
-            json_data = json.loads(
-                data.replace("jQuery000000000000000_0000000000([", "").replace("]);", "")
-            )
+            try:
+                json_data = json.loads(
+                    data.replace("jQuery000000000000000_0000000000([", "").replace("]);", "")
+                )
+            except Exception:
+                return {}
             return json_data
             # return await resp.json()
 
@@ -105,13 +147,18 @@ class Runescape(commands.Cog):
             async with session.get(
                 await self.make_url_profile(runescape_name, activities)
             ) as resp:
-                return await resp.json()
+                data = await resp.json()
+        # log.debug(data)
+        return data
 
     async def get_profile_obj(self, profile_data: dict) -> Profile:
-        return await Profile.from_json(profile_data)
+        ret = await Profile.from_json(profile_data)
+        # log.debug(ret)
+        return ret
 
     async def get_profile(self, runescape_name: str, activities: int = 5) -> Profile:
         data = await self.get_data_profile(runescape_name, activities)
+        log.debug(data)
         if "error" in data:
             return "NO PROFILE"
         return await self.get_profile_obj(data)
@@ -121,28 +168,28 @@ class Runescape(commands.Cog):
         self, ctx: commands.Context, runescape_name: str = None, activity: int = 10
     ) -> None:
         """Display a players profile in Runescape"""
-        user = self.bot.get_user(ctx.message.author.id)
+        await ctx.trigger_typing()
         if runescape_name is None:
-            runescape_name = await self.config.user(user).rsn()
+            runescape_name = await self.config.user(ctx.author).rsn()
             if runescape_name is None:
                 await ctx.send("You need to set your Runescape name first!")
                 return
 
         details = await self.get_player_details(runescape_name)
         data = await self.get_profile(runescape_name, activity)
+        # log.debug(data)
         if data == "NO PROFILE":
             await ctx.send("The account {} doesn't appear to exist!".format(runescape_name))
             return
-        # print(data.slayer)
         embed = await self.profile_embed(data, details)
         await ctx.send(embed=embed)
 
     @runescape.command()
     async def stats(self, ctx: commands.Context, *, runescape_name: str = None) -> None:
         """Display a players stats in Runescape"""
-        user = self.bot.get_user(ctx.message.author.id)
+        await ctx.trigger_typing()
         if runescape_name is None:
-            runescape_name = await self.config.user(user).rsn()
+            runescape_name = await self.config.user(ctx.author).rsn()
             if runescape_name is None:
                 await ctx.send("You need to set your Runescape name first!")
                 return
@@ -152,7 +199,6 @@ class Runescape(commands.Cog):
         if data == "NO PROFILE":
             await ctx.send("The account {} doesn't appear to exist!".format(runescape_name))
             return
-        # print(data.slayer)
         skills = await self.stats_message(data)
         await ctx.send(skills)
 
@@ -201,7 +247,7 @@ class Runescape(commands.Cog):
         )
 
     async def stats_message(self, p: Profile) -> str:
-        table = await self.raw_stats_message(p)
+        table = str(p)
         top_row_len = len(table.split("\n")[0])
         top_row = top_row_len * "-"
         spaces = int(((top_row_len - (14 + len(p.name))) / 2) - 1) * " "
@@ -209,9 +255,7 @@ class Runescape(commands.Cog):
             "```css\n{top_row}\n|{spaces}"
             "RS3 STATS FOR {user}{spaces}|"
             "\n{top_row}\n{skills}\n{top_row}```"
-            ).format(
-                spaces=spaces, top_row=top_row, user=p.name, skills=table
-            )
+        ).format(spaces=spaces, top_row=top_row, user=p.name, skills=table)
         return skills
 
     async def osrs_stats_page(self, data: dict, runescape_name: str) -> str:
@@ -223,17 +267,18 @@ class Runescape(commands.Cog):
             "{top_row}\n|{spaces}OSRS STATS FOR "
             "{user}{spaces}|\n{top_row}\n"
             "{skills}\n{top_row}"
-        ).format(
-            spaces=spaces, top_row=top_row, user=runescape_name, skills=table
-        )
+        ).format(spaces=spaces, top_row=top_row, user=runescape_name, skills=table)
         return skills
 
     async def profile_embed(self, profile: Profile, details: dict) -> discord.Embed:
         em = discord.Embed()
-        if details["isSuffix"]:
+
+        if details and details["isSuffix"]:
             em.set_author(name="{} {}".format(profile.name, details["title"]))
-        else:
+        elif details:
             em.set_author(name="{} {}".format(details["title"], profile.name))
+        else:
+            em.set_author(name=profile.name)
         activities = ""
         for activity in profile.activities:
             activities += "[{}] {}\n".format(activity["date"], activity["text"])

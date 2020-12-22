@@ -1,8 +1,8 @@
-import discord
-from random import choice
 import random
-from redbot.core import commands
+from random import choice
 
+import discord
+from redbot.core import commands
 
 FACES = [
     "¢‿¢",
@@ -437,11 +437,17 @@ FACES = [
 
 class Faces(commands.Cog):
     """
-        Generate fun/random unicode faces courtesy of the CIA files
+    Generate fun/random unicode faces courtesy of the CIA files
     """
 
     def __init__(self, bot):
         self.bot = bot
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     @commands.command(aliases=["japaneseface"])
     async def face(self, ctx, number=None):

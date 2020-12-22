@@ -1,14 +1,12 @@
-import discord
 import datetime
-import aiohttp
+from typing import Literal, Optional
 from urllib.parse import urlencode
 
-from typing import Optional
-
+import aiohttp
+import discord
 from discord.ext.commands.converter import Converter
 from discord.ext.commands.errors import BadArgument
-
-from redbot.core import commands, Config, checks
+from redbot.core import Config, checks, commands
 from redbot.core.i18n import Translator, cog_i18n
 
 _ = Translator("Weather", __file__)
@@ -33,6 +31,7 @@ class UnitConverter(Converter):
 @cog_i18n(_)
 class Weather(commands.Cog):
     """Get weather data from https://openweathermap.org"""
+
     __author__ = ["TrustyJAID"]
     __version__ = "1.2.1"
 
@@ -51,19 +50,30 @@ class Weather(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ):
+        """
+        Method for finding users data inside the cog and deleting it.
+        """
+        await self.config.user_from_id(user_id).clear()
 
     @commands.group(name="weather", aliases=["we"], invoke_without_command=True)
     @commands.bot_has_permissions(embed_links=True)
     async def weather(self, ctx: commands.Context, *, location: str) -> None:
         """
-            Display weather in a given location
+        Display weather in a given location
 
-            `location` must take the form of `city, Country Code`
-            example: `[p]weather New York,US`
+        `location` must take the form of `city, Country Code`
+        example: `[p]weather New York,US`
         """
         await ctx.trigger_typing()
         await self.get_weather(ctx, location=location)
@@ -72,10 +82,10 @@ class Weather(commands.Cog):
     @commands.bot_has_permissions(embed_links=True)
     async def weather_by_zip(self, ctx: commands.Context, *, zipcode: str) -> None:
         """
-            Display weather in a given location
+        Display weather in a given location
 
-            `zipcode` must be a valid ZIP code or `ZIP code, Country Code` (assumes US otherwise)
-            example: `[p]weather zip 20500`
+        `zipcode` must be a valid ZIP code or `ZIP code, Country Code` (assumes US otherwise)
+        example: `[p]weather zip 20500`
         """
         await ctx.trigger_typing()
         await self.get_weather(ctx, zipcode=zipcode)
@@ -84,11 +94,11 @@ class Weather(commands.Cog):
     @commands.bot_has_permissions(embed_links=True)
     async def weather_by_cityid(self, ctx: commands.Context, *, cityid: int) -> None:
         """
-            Display weather in a given location
+        Display weather in a given location
 
-            `cityid` must be a valid openweathermap city ID
-            (get list here: <https://bulk.openweathermap.org/sample/city.list.json.gz>)
-            example: `[p]weather cityid 2172797`
+        `cityid` must be a valid openweathermap city ID
+        (get list here: <https://bulk.openweathermap.org/sample/city.list.json.gz>)
+        example: `[p]weather cityid 2172797`
         """
         await ctx.trigger_typing()
         await self.get_weather(ctx, cityid=cityid)
@@ -97,11 +107,11 @@ class Weather(commands.Cog):
     @commands.bot_has_permissions(embed_links=True)
     async def weather_by_coordinates(self, ctx: commands.Context, lat: float, lon: float) -> None:
         """
-            Display weather in a given location
+        Display weather in a given location
 
-            `lat` and `lon` specify a precise point on Earth using the
-            geographic coordinates specified by latitude (north-south) and longitude (east-west).
-            example: `[p]weather coordinates 35 139`
+        `lat` and `lon` specify a precise point on Earth using the
+        geographic coordinates specified by latitude (north-south) and longitude (east-west).
+        example: `[p]weather coordinates 35 139`
         """
         await ctx.trigger_typing()
         await self.get_weather(ctx, lat=lat, lon=lon)
@@ -113,11 +123,12 @@ class Weather(commands.Cog):
 
     @weather_set.command(name="guild", aliases=["server"])
     @checks.mod_or_permissions(manage_messages=True)
+    @commands.guild_only()
     async def set_guild(self, ctx: commands.Context, units: UnitConverter) -> None:
         """
-            Sets the guild default weather units
+        Sets the guild default weather units
 
-            `units` must be one of imperial, metric, or kelvin
+        `units` must be one of imperial, metric, or kelvin
         """
         guild = ctx.message.guild
         await self.config.guild(guild).units.set(units)
@@ -127,9 +138,9 @@ class Weather(commands.Cog):
     @checks.mod_or_permissions(manage_messages=True)
     async def set_bot(self, ctx: commands.Context, units: UnitConverter) -> None:
         """
-            Sets the bots default weather units
+        Sets the bots default weather units
 
-            `units` must be one of imperial, metric, or kelvin
+        `units` must be one of imperial, metric, or kelvin
         """
         await self.config.units.set(units)
         await ctx.send(_("Bots default units set to {units}").format(units=str(units)))
@@ -137,10 +148,10 @@ class Weather(commands.Cog):
     @weather_set.command(name="user")
     async def set_user(self, ctx: commands.Context, units: UnitConverter) -> None:
         """
-            Sets the user default weather units
+        Sets the user default weather units
 
-            `units` must be one of imperial, metric, or kelvin
-            Note: User settings override guild settings.
+        `units` must be one of imperial, metric, or kelvin
+        Note: User settings override guild settings.
         """
         author = ctx.message.author
         await self.config.user(author).units.set(units)
@@ -158,7 +169,7 @@ class Weather(commands.Cog):
         zipcode: Optional[str] = None,
         cityid: Optional[int] = None,
         lat: Optional[float] = None,
-        lon: Optional[float] = None
+        lon: Optional[float] = None,
     ) -> None:
         guild = ctx.message.guild
         author = ctx.message.author

@@ -1,19 +1,17 @@
-import random
-import discord
 import asyncio
 import logging
-import string
 import os
-
+import random
+import string
 from pathlib import Path
-from typing import Optional, cast
+from typing import Literal, Optional, cast
 
-from redbot.core import commands, checks, Config, VersionInfo, version_info
+import discord
+from redbot import VersionInfo, version_info
+from redbot.core import Config, VersionInfo, checks, commands, version_info
 from redbot.core.data_manager import cog_data_path
-from redbot.core.utils.menus import DEFAULT_CONTROLS, menu
-
 from redbot.core.i18n import Translator, cog_i18n
-
+from redbot.core.utils.menus import DEFAULT_CONTROLS, menu
 
 _ = Translator("AddImage", __file__)
 log = logging.getLogger("red.Trusty-cogs.addimage")
@@ -22,11 +20,11 @@ log = logging.getLogger("red.Trusty-cogs.addimage")
 @cog_i18n(_)
 class AddImage(commands.Cog):
     """
-        Add images the bot can upload
+    Add images the bot can upload
     """
 
     __author__ = ["TrustyJAID"]
-    __version__ = "1.3.2"
+    __version__ = "1.3.4"
 
     def __init__(self, bot):
         self.bot = bot
@@ -40,10 +38,34 @@ class AddImage(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ):
+        """
+        Method for finding users data inside the cog and deleting it.
+        """
+        all_guilds = await self.config.all_guilds()
+        for guild_id, data in all_guilds.items():
+            for image in data["images"]:
+                if image["author"] == user_id:
+                    try:
+                        os.remove(cog_data_path(self) / str(guild_id) / image["file_loc"])
+                    except Exception:
+                        log.error(
+                            _("Error deleting image {image}").format(image=image["file_loc"]),
+                            exc_info=True,
+                        )
+                        pass
+                    data["images"].remove(image)
+                await self.config.guild_from_id(guild_id).images.set(data["images"])
 
     async def initialize(self) -> None:
         guilds = await self.config.all_guilds()
@@ -111,7 +133,7 @@ class AddImage(commands.Cog):
 
     async def local_perms(self, message: discord.Message) -> bool:
         """Check the user is/isn't locally whitelisted/blacklisted.
-            https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/release/3.0.0/redbot/core/global_checks.py
+        https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/release/3.0.0/redbot/core/global_checks.py
         """
         if await self.bot.is_owner(message.author):
             return True
@@ -139,7 +161,7 @@ class AddImage(commands.Cog):
 
     async def global_perms(self, message: discord.Message) -> bool:
         """Check the user is/isn't globally whitelisted/blacklisted.
-            https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/release/3.0.0/redbot/core/global_checks.py
+        https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/release/3.0.0/redbot/core/global_checks.py
         """
         if await self.bot.is_owner(message.author):
             return True
@@ -186,6 +208,9 @@ class AddImage(commands.Cog):
         msg = message.content
         guild = message.guild
         channel = message.channel
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         try:
             prefix = await self.get_prefix(message)
         except ValueError:
@@ -246,15 +271,24 @@ class AddImage(commands.Cog):
     @commands.guild_only()
     async def addimage(self, ctx: commands.Context) -> None:
         """
-            Add an image for the bot to directly upload
+        Add an image for the bot to directly upload
         """
         pass
+
+    @checks.is_owner()
+    @addimage.command()
+    async def deleteallbyuser(self, ctx: commands.Context, user_id: int):
+        """
+        Delete all triggers created by a specified user ID.
+        """
+        await self.red_delete_data_for_user(requester="owner", user_id=user_id)
+        await ctx.tick()
 
     @addimage.command(name="ignoreglobal")
     @checks.mod_or_permissions(manage_channels=True)
     async def ignore_global_commands(self, ctx: commands.Context) -> None:
         """
-            Toggle usage of bot owner set global images on this server
+        Toggle usage of bot owner set global images on this server
         """
         ignore_global = await self.config.guild(ctx.guild).ignore_global()
         await self.config.guild(ctx.guild).ignore_global.set(not ignore_global)
@@ -269,7 +303,7 @@ class AddImage(commands.Cog):
         self, ctx: commands.Context, image_loc="guild", server_id: discord.Guild = None
     ) -> None:
         """
-            List images added to bot
+        List images added to bot
         """
         if image_loc in ["global"]:
             image_list = await self.config.images()
@@ -306,7 +340,7 @@ class AddImage(commands.Cog):
     @checks.is_owner()
     async def clear_global(self, ctx: commands.Context) -> None:
         """
-            Clears the full set of images stored globally
+        Clears the full set of images stored globally
         """
         await self.config.images.set([])
         directory = cog_data_path(self) / "global"
@@ -320,7 +354,7 @@ class AddImage(commands.Cog):
     @checks.mod_or_permissions(manage_channels=True)
     async def clear_images(self, ctx: commands.Context) -> None:
         """
-            Clear all the images stored for the current server
+        Clear all the images stored for the current server
         """
         await self.config.guild(ctx.guild).images.set([])
         directory = cog_data_path(self) / str(ctx.guild.id)
@@ -335,7 +369,7 @@ class AddImage(commands.Cog):
     @checks.mod_or_permissions(manage_channels=True)
     async def clean_deleted_images(self, ctx: commands.Context) -> None:
         """
-            Cleanup deleted images that are not supposed to be saved anymore
+        Cleanup deleted images that are not supposed to be saved anymore
         """
         images = await self.config.guild(ctx.guild).images()
         directory = cog_data_path(self) / str(ctx.guild.id)
@@ -353,9 +387,9 @@ class AddImage(commands.Cog):
     @checks.mod_or_permissions(manage_channels=True)
     async def remimage(self, ctx: commands.Context, name: str) -> None:
         """
-            Remove a selected images
+        Remove a selected images
 
-            `name` the command name used to post the image
+        `name` the command name used to post the image
         """
         guild = ctx.message.guild
         channel = ctx.message.channel
@@ -382,9 +416,9 @@ class AddImage(commands.Cog):
     @addimage.command(hidden=True, name="deleteglobal", aliases=["dg", "delglobal"])
     async def rem_image_global(self, ctx: commands.Context, name: str) -> None:
         """
-            Remove a selected images
+        Remove a selected images
 
-            `name` the command name used to post the image
+        `name` the command name used to post the image
         """
         channel = ctx.message.channel
         name = name.lower()
@@ -458,9 +492,9 @@ class AddImage(commands.Cog):
     @commands.bot_has_permissions(attach_files=True)
     async def add_image_guild(self, ctx: commands.Context, name: str) -> None:
         """
-            Add an image to direct upload on this server
+        Add an image to direct upload on this server
 
-            `name` the command name used to post the image
+        `name` the command name used to post the image
         """
         guild = ctx.message.guild
         if await self.check_command_exists(name, guild):
@@ -484,9 +518,9 @@ class AddImage(commands.Cog):
     @addimage.command(name="addglobal")
     async def add_image_global(self, ctx: commands.Context, name: str) -> None:
         """
-            Add an image to direct upload globally
+        Add an image to direct upload globally
 
-            `name` the command name used to post the image
+        `name` the command name used to post the image
         """
         guild = ctx.message.guild
         msg = ctx.message

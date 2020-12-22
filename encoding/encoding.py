@@ -1,109 +1,36 @@
+import base64
 import hashlib
 import re
-import base64
+from string import ascii_lowercase as lc
+from string import ascii_uppercase as uc
+from typing import Optional
 
 from redbot.core import commands
 from redbot.core.utils.chat_formatting import pagify
 
-from typing import Optional
-from string import ascii_lowercase as lc, ascii_uppercase as uc
-
 from .braille import (
-    letters,
-    r_letters,
     contractions,
-    r_contractions,
-    punctuation,
-    r_punctuation,
+    letters,
     numbers,
+    punctuation,
+    r_contractions,
+    r_letters,
     r_numbers,
+    r_punctuation,
+    dna,
 )
 
 
 class Encoding(commands.Cog):
     """
-        Convert messages into fun encodings
+    Convert messages into fun encodings
     """
 
     __author__ = ["TrustyJAID"]
-    __version__ = "1.2.0"
+    __version__ = "1.3.1"
 
     def __init__(self, bot):
         self.bot = bot
-        self.table = {
-            "A": [
-                "00",
-                "01",
-                "10",
-                "11",
-                "00",
-                "00",
-                "00",
-                "01",
-                "01",
-                "01",
-                "10",
-                "10",
-                "10",
-                "11",
-                "11",
-                "11",
-            ],
-            "G": [
-                "01",
-                "10",
-                "11",
-                "00",
-                "11",
-                "10",
-                "01",
-                "11",
-                "00",
-                "10",
-                "11",
-                "00",
-                "01",
-                "00",
-                "01",
-                "10",
-            ],
-            "C": [
-                "10",
-                "11",
-                "00",
-                "01",
-                "10",
-                "11",
-                "10",
-                "10",
-                "11",
-                "00",
-                "01",
-                "11",
-                "00",
-                "01",
-                "00",
-                "01",
-            ],
-            "T": [
-                "11",
-                "00",
-                "01",
-                "10",
-                "01",
-                "01",
-                "11",
-                "00",
-                "10",
-                "11",
-                "00",
-                "01",
-                "11",
-                "10",
-                "10",
-                "00",
-            ],
-        }
         # A = 00
         # G = 10
         # C = 11
@@ -111,10 +38,16 @@ class Encoding(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     def search_words(self, data: str) -> bool:
         count = 0
@@ -141,7 +74,7 @@ class Encoding(commands.Cog):
     @hash_cmd.group(name="md5")
     async def hash_md5(self, ctx: commands.Context, *, txt: str) -> None:
         """
-            MD5 Encrypt Text
+        MD5 Encrypt Text
         """
         md5 = hashlib.md5(txt.encode()).hexdigest()
         await ctx.send("**MD5**\n" + md5)
@@ -149,7 +82,7 @@ class Encoding(commands.Cog):
     @hash_cmd.command(name="sha1")
     async def hash_sha1(self, ctx: commands.Context, *, txt: str) -> None:
         """
-            SHA1 Encrypt Text
+        SHA1 Encrypt Text
         """
         sha = hashlib.sha1(txt.encode()).hexdigest()
         await ctx.send("**SHA1**\n" + sha)
@@ -157,7 +90,7 @@ class Encoding(commands.Cog):
     @hash_cmd.command(name="sha256")
     async def hash_sha256(self, ctx: commands.Context, *, txt: str) -> None:
         """
-            SHA256 Encrypt Text
+        SHA256 Encrypt Text
         """
         sha256 = hashlib.sha256(txt.encode()).hexdigest()
         await ctx.send("**SHA256**\n" + sha256)
@@ -165,7 +98,7 @@ class Encoding(commands.Cog):
     @hash_cmd.command(name="sha512")
     async def hash_sha512(self, ctx: commands.Context, *, txt: str) -> None:
         """
-            SHA512 Encrypt Text
+        SHA512 Encrypt Text
         """
         sha512 = hashlib.sha512(txt.encode()).hexdigest()
         await ctx.send("**SHA512**\n" + sha512)
@@ -183,7 +116,7 @@ class Encoding(commands.Cog):
     @_encode.command(name="binary")
     async def encode_binary(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Encode text into binary sequences of 8
+        Encode text into binary sequences of 8
         """
         ascii_bin = " ".join(bin(x)[2:].zfill(8) for x in message.encode("utf-8"))
         await ctx.send(ascii_bin)
@@ -191,16 +124,19 @@ class Encoding(commands.Cog):
     @_decode.command(name="binary")
     async def decode_binary(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Decode binary sequences of 8
+        Decode binary sequences of 8
         """
-        msg = message.replace(" ", "")
-        bin_ascii = "".join([chr(int(msg[i : i + 8], 2)) for i in range(0, len(msg), 8)])
-        await ctx.send(bin_ascii)
+        try:
+            message = re.sub(r"[\s]+", "", message)
+            bin_ascii = "".join([chr(int(message[i : i + 8], 2)) for i in range(0, len(message), 8)])
+            await ctx.send(bin_ascii)
+        except Exception:
+            await ctx.send("That does not look like valid binary.")
 
     @_encode.command(name="hex")
     async def encode_hex(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Encode text into hexadecimal
+        Encode text into hexadecimal
         """
         ascii_bin = " ".join(hex(x)[2:] for x in message.encode("utf-8"))
         await ctx.send(ascii_bin)
@@ -208,43 +144,89 @@ class Encoding(commands.Cog):
     @_decode.command(name="hex")
     async def decode_hex(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Decode a hexadecimal sequence to text
+        Decode a hexadecimal sequence to text
         """
-        ascii_bin = "".join(chr(int("0x" + x, 16)) for x in re.split(r"[\s]+", message))
-        await ctx.send(ascii_bin)
+        try:
+            message = re.sub(r"[\s]+", "", message)
+            ascii_bin = "".join(
+                chr(int("0x" + message[x : x + 2], 16)) for x in range(0, len(message), 2)
+            )
+            await ctx.send(ascii_bin)
+        except Exception:
+            await ctx.send("That does not look like valid hex.")
+
+    @_encode.command(name="b16", aliases=["base16"])
+    async def encode_b16(self, ctx: commands.Context, *, message: str) -> None:
+        """
+        Encode text into base 16
+        """
+        await ctx.send(base64.b16encode(bytes(message, "utf-8")).decode("utf-8"))
+
+    @_decode.command(name="b16", aliases=["base16"])
+    async def decode_b16(self, ctx: commands.Context, *, message: str) -> None:
+        """
+        Decode base16 text
+        """
+        try:
+            await ctx.send(base64.b16decode(bytes(message, "utf-8")).decode("utf-8"))
+        except Exception:
+            await ctx.send("That does not look like valid base 16 characters.")
+
+    @_encode.command(name="b32", aliases=["base32"])
+    async def encode_b32(self, ctx: commands.Context, *, message: str) -> None:
+        """
+        Encode text into base 32
+        """
+        await ctx.send(base64.b32encode(bytes(message, "utf-8")).decode("utf-8"))
+
+    @_decode.command(name="b32", aliases=["base32"])
+    async def decode_b32(self, ctx: commands.Context, *, message: str) -> None:
+        """
+        Decode base32 text
+        """
+        try:
+            await ctx.send(base64.b32decode(bytes(message, "utf-8")).decode("utf-8"))
+        except Exception:
+            await ctx.send("That does not look like valid base 32 characters.")
 
     @_encode.command(name="b64", aliases=["base64"])
     async def encode_b64(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Encode text into base 64
+        Encode text into base 64
         """
         await ctx.send(base64.b64encode(bytes(message, "utf-8")).decode("utf-8"))
 
     @_decode.command(name="b64", aliases=["base64"])
     async def decode_b64(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Decode a base 64 text
+        Decode base 64 text
         """
-        await ctx.send(base64.b64decode(bytes(message, "utf-8")).decode("utf-8"))
+        try:
+            await ctx.send(base64.b64decode(bytes(message, "utf-8")).decode("utf-8"))
+        except UnicodeDecodeError:
+            await ctx.send("That does not look like valid base 64 characters.")
 
     @_encode.command(name="chr", aliases=["character"])
     async def encode_char(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Encode message into character numbers
+        Encode message into character numbers
         """
         await ctx.send(" ".join(str(ord(x)) for x in message))
 
     @_decode.command(name="chr", aliases=["character"])
     async def decode_char(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Decode character numbers to a message
+        Decode character numbers to a message
         """
-        await ctx.send(" ".join(str(chr(int(x))) for x in re.split(r"[\s]+", message)))
+        try:
+            await ctx.send(" ".join(str(chr(int(x))) for x in re.split(r"[\s]+", message)))
+        except Exception:
+            await ctx.send("That does not look like valid char data.")
 
     @_encode.command(name="braille")
     async def encode_braille(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Encode text into braille unicode characters
+        Encode text into braille unicode characters
         """
         for word in re.split(r"[\s]+", message):
             if word.lower() in contractions:
@@ -263,7 +245,7 @@ class Encoding(commands.Cog):
     @_decode.command(name="braille")
     async def decode_braille(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Decide braille unicode characters to ascii
+        Decide braille unicode characters to ascii
         """
         for word in re.split(r"[\s]+", message):
             if word in r_contractions:
@@ -294,7 +276,7 @@ class Encoding(commands.Cog):
 
     def rot_encode(self, n: int, text: str) -> str:
         """
-            https://stackoverflow.com/questions/47580337/short-rot-n-decode-function-in-python
+        https://stackoverflow.com/questions/47580337/short-rot-n-decode-function-in-python
         """
         lookup = str.maketrans(lc + uc, lc[n:] + lc[:n] + uc[n:] + uc[:n])
         return text.translate(lookup)
@@ -304,7 +286,7 @@ class Encoding(commands.Cog):
         self, ctx: commands.Context, rot_key: Optional[int], *, message: str
     ) -> None:
         """
-            Encode a caeser cipher message with specified key
+        Encode a caeser cipher message with specified key
         """
         if not rot_key:
             rot_key = 13
@@ -315,7 +297,7 @@ class Encoding(commands.Cog):
         self, ctx: commands.Context, rot_key: Optional[int], *, message: str
     ) -> None:
         """
-            Decode a caeser cipher message with specified key
+        Decode a caeser cipher message with specified key
         """
         if not rot_key:
             rot_key = 13
@@ -324,12 +306,12 @@ class Encoding(commands.Cog):
     @_encode.command(name="dna")
     async def dna_encode(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Encodes a string into DNA 4 byte ACGT format
+        Encodes a string into DNA 4 byte ACGT format
         """
         dna = {"00": "A", "01": "T", "10": "G", "11": "C"}
         message = message.strip(" ")
         binary = " ".join(bin(x)[2:].zfill(8) for x in message.encode("utf-8")).replace(" ", "")
-        binlist = [binary[i: i + 2] for i in range(0, len(binary), 2)]
+        binlist = [binary[i : i + 2] for i in range(0, len(binary), 2)]
         newmsg = ""
         count = 0
         for letter in binlist:
@@ -343,7 +325,7 @@ class Encoding(commands.Cog):
     @_decode.command(name="dna")
     async def dna_decode(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Decodes a string of DNA in 4 byte ACGT format.
+        Decodes a string of DNA in 4 byte ACGT format.
         """
         message = message.strip(" ")
         mapping = {}
@@ -353,7 +335,7 @@ class Encoding(commands.Cog):
             for character in message:
                 if character in skip:
                     continue
-                replacement += self.table[character][i]
+                replacement += dna[character][i]
             try:
                 n = int("0b" + replacement, 2)
                 mapping[i] = n.to_bytes((n.bit_length() + 7) // 8, "big").decode("utf8", "ignore")

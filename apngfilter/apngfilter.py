@@ -1,9 +1,10 @@
-import discord
 import io
-from redbot.core import checks, commands, Config
 import re
-import aiohttp
 from typing import cast
+
+import aiohttp
+import discord
+from redbot.core import Config, checks, commands
 
 IS_LINK_REGEX = re.compile(r"(http(s?):)([/|.|\w|\s|-])*\.(?:png)")
 APNG_REGEX = re.compile(rb"fdAT")  # credit to Soulrift for researh on this
@@ -23,17 +24,23 @@ class APNGFilter(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     @commands.command()
     @checks.mod_or_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     async def apngfilter(self, ctx: commands.Context) -> None:
         """
-            Toggle APNG filters on the server
+        Toggle APNG filters on the server
         """
         if await self.config.guild(ctx.guild).enabled():
             await self.config.guild(ctx.guild).enabled.set(False)

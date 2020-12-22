@@ -1,22 +1,20 @@
-import discord
-import aiohttp
+import asyncio
+import functools
 import logging
 import sys
-import functools
-import asyncio
-
 from io import BytesIO
-from PIL import Image, ImageFont, ImageDraw
-from PIL import ImageSequence
-from typing import Union, cast, Optional
+from typing import Optional, Union, cast
 
-from .barcode import generate, ImageWriter
-from .templates import blank_template
-from .badge_entry import Badge
-
-from redbot.core import commands, Config
-from redbot.core.i18n import Translator, cog_i18n
+import aiohttp
+import discord
+from PIL import Image, ImageDraw, ImageFont, ImageSequence
+from redbot.core import Config, commands
 from redbot.core.data_manager import bundled_data_path
+from redbot.core.i18n import Translator, cog_i18n
+
+from .badge_entry import Badge
+from .barcode import ImageWriter, generate
+from .templates import blank_template
 
 _ = Translator("Badges", __file__)
 log = logging.getLogger("red.Trusty-cogs.badges")
@@ -25,8 +23,9 @@ log = logging.getLogger("red.Trusty-cogs.badges")
 @cog_i18n(_)
 class Badges(commands.Cog):
     """
-        Create fun fake badges based on your discord profile
+    Create fun fake badges based on your discord profile
     """
+
     __author__ = ["TrustyJAID"]
     __version__ = "1.1.1"
 
@@ -40,10 +39,16 @@ class Badges(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     def remove_white_barcode(self, img: Image) -> Image:
         """https://stackoverflow.com/questions/765736/using-pil-to-make-all-white-pixels-transparent"""
@@ -107,6 +112,7 @@ class Badges(commands.Cog):
         if str(status) == "dnd":
             status = _("MIA")
         barcode = BytesIO()
+        log.debug(type(barcode))
         generate("code39", str(user.id), writer=ImageWriter(self), output=barcode)
         barcode = Image.open(barcode)
         barcode = self.remove_white_barcode(barcode)
@@ -148,6 +154,7 @@ class Badges(commands.Cog):
             draw.text((60, 585), str(user.joined_at), fill=fill, font=font2)
         else:
             draw.text((60, 585), str(user.created_at), fill=fill, font=font2)
+        barcode.close()
         return template
 
     def make_animated_gif(self, template: Image, avatar: BytesIO) -> BytesIO:
@@ -237,10 +244,10 @@ class Badges(commands.Cog):
     @commands.command(aliases=["badge"])
     async def badges(self, ctx: commands.Context, *, badge: str) -> None:
         """
-            Creates a fun fake badge based on your discord profile
+        Creates a fun fake badge based on your discord profile
 
-            `badge` is the name of the badges
-            do `[p]listbadges` to see available badges
+        `badge` is the name of the badges
+        do `[p]listbadges` to see available badges
         """
         guild = ctx.message.guild
         user = ctx.message.author
@@ -259,16 +266,17 @@ class Badges(commands.Cog):
             image = discord.File(badge_img, "badge.png")
             embed = discord.Embed(color=ctx.author.color)
             embed.set_image(url="attachment://badge.png")
+            badge_img.close()
             await ctx.send(files=[image])
 
     @commands.command(aliases=["gbadge"])
     async def gbadges(self, ctx: commands.Context, *, badge: str) -> None:
         """
-            Creates a fun fake gif badge based on your discord profile
-            this only works if you have a gif avatar
+        Creates a fun fake gif badge based on your discord profile
+        this only works if you have a gif avatar
 
-            `badge` is the name of the badges
-            do `[p]listbadges` to see available badges
+        `badge` is the name of the badges
+        do `[p]listbadges` to see available badges
         """
         guild = ctx.message.guild
         user = ctx.message.author
@@ -285,12 +293,13 @@ class Badges(commands.Cog):
                 await ctx.send(_("Something went wrong sorry!"))
                 return
             image = discord.File(badge_img)
+            badge_img.close()
             await ctx.send(file=image)
 
     @commands.command()
     async def listbadges(self, ctx: commands.Context) -> None:
         """
-            List the available badges that can be created
+        List the available badges that can be created
         """
         # guild = ctx.message.guild
         global_badges = await self.config.badges()

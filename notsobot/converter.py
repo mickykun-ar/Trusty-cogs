@@ -1,9 +1,12 @@
 import re
 
+import unidecode
 from discord.ext.commands.converter import Converter
 from discord.ext.commands.errors import BadArgument
 
-IMAGE_LINKS = re.compile(r"(https?:\/\/[^\"\'\s]*\.(?:png|jpg|jpeg|gif|png|svg)(\?size=[0-9]*)?)")
+IMAGE_LINKS = re.compile(
+    r"(https?:\/\/[^\"\'\s]*\.(?:png|jpg|jpeg|gif|png|svg)(\?size=[0-9]*)?)", flags=re.I
+)
 EMOJI_REGEX = re.compile(r"(<(a)?:[a-zA-Z0-9\_]+:([0-9]+)>)")
 MENTION_REGEX = re.compile(r"<@!?([0-9]+)>")
 ID_REGEX = re.compile(r"[0-9]{17,}")
@@ -11,8 +14,8 @@ ID_REGEX = re.compile(r"[0-9]{17,}")
 
 class ImageFinder(Converter):
     """
-        This is a class to convert notsobots image searching capabilities
-        into a more general converter class
+    This is a class to convert notsobots image searching capabilities
+    into a more general converter class
     """
 
     async def convert(self, ctx, argument):
@@ -54,6 +57,17 @@ class ImageFinder(Converter):
         if attachments:
             for attachment in attachments:
                 urls.append(attachment.url)
+        if not urls:
+            for m in ctx.guild.members:
+                if argument.lower() in unidecode.unidecode(m.display_name.lower()):
+                    # display_name so we can get the nick of the user first
+                    # without being NoneType and then check username if that matches
+                    # what we're expecting
+                    urls.append(str(m.avatar_url_as(format="png")))
+                    continue
+                if argument.lower() in unidecode.unidecode(m.name.lower()):
+                    urls.append(str(m.avatar_url_as(format="png")))
+                    continue
 
         if not urls:
             raise BadArgument("No images provided.")

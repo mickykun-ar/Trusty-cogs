@@ -1,20 +1,25 @@
+import logging
+from typing import Literal
+
 import discord
-from redbot.core import commands, Config, checks
+from redbot import VersionInfo, version_info
+from redbot.core import Config, checks, commands
 from redbot.core.i18n import Translator, cog_i18n
 
-
 _ = Translator("StickyRoles", __file__)
+log = logging.getLogger("red.trusty-cogs.stickyroles")
 
 
 @cog_i18n(_)
 class StickyRoles(commands.Cog):
     """
-        Reapplies specific roles on join. Rewritten for V3 from
+    Reapplies specific roles on join. Rewritten for V3 from
 
-        https://github.com/Twentysix26/26-Cogs/blob/master/stickyroles/stickyroles.py
+    https://github.com/Twentysix26/26-Cogs/blob/master/stickyroles/stickyroles.py
     """
+
     __author__ = ["Twentysix", "TrustyJAID"]
-    __version__ = "2.0.0"
+    __version__ = "2.0.1"
 
     def __init__(self, bot):
         self.bot = bot
@@ -23,10 +28,25 @@ class StickyRoles(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ):
+        """
+        Method for finding users data inside the cog and deleting it.
+        """
+        all_guilds = await self.config.all_guilds()
+        for guild_id, data in all_guilds.items():
+            if str(user_id) in data["to_reapply"]:
+                del data["to_reapply"][str(user_id)]
+                await self.config.guild_from_id(guild_id).to_reapply.set(data["to_reapply"])
 
     @commands.group(aliases=["stickyrole"])
     @checks.admin()
@@ -70,8 +90,8 @@ class StickyRoles(commands.Cog):
     async def clear(self, ctx: commands.Context) -> None:
         """Removes all sticky roles"""
         guild = ctx.message.guild
-        await self.config.guild(guild).sticky_roles.set([])
-        await self.config.guild(guild).to_reapply.set({})
+        await self.config.guild(guild).sticky_roles.clear()
+        await self.config.guild(guild).to_reapply.clear()
         await ctx.send(_("All sticky roles have been removed."))
 
     @stickyroles.command(name="list")
@@ -90,9 +110,12 @@ class StickyRoles(commands.Cog):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         guild = member.guild
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         sticky_roles = await self.config.guild(guild).sticky_roles()
         to_reapply = await self.config.guild(guild).to_reapply()
-        if to_reapply is None:
+        if sticky_roles is None:
             return
 
         save = False
@@ -110,6 +133,9 @@ class StickyRoles(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         guild = member.guild
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         sticky_roles = await self.config.guild(guild).sticky_roles()
         to_reapply = await self.config.guild(guild).to_reapply()
         if to_reapply is None:
@@ -133,15 +159,15 @@ class StickyRoles(commands.Cog):
             try:
                 await member.add_roles(*to_add, reason="Sticky roles")
             except discord.Forbidden:
-                print(
+                log.info(
                     _("Failed to add roles")
                     + _("I lack permissions to do that.")
                     + "{} ({})\n{}\n".format(member, member.id, to_add)
                 )
-            except discord.HTTPException as e:
-                msg = _("Failed to add roles to ") + "{} ({})\n{}\n{}".format(
-                    member, member.id, to_add, e
+            except discord.HTTPException:
+                msg = _("Failed to add roles to ") + "{} ({})\n{}".format(
+                    member, member.id, to_add
                 )
-                print(msg)
+                log.exception(msg)
 
         await self.config.guild(guild).to_reapply.set(to_reapply)

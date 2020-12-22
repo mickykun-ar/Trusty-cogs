@@ -1,18 +1,17 @@
-import discord
 import asyncio
-import aiohttp
-import time
 import logging
+import time
+from datetime import datetime, timedelta
+from typing import List, Optional, Tuple
 
-from typing import Tuple, Optional, List
-from datetime import datetime
-
-from redbot.core import Config, commands, VersionInfo, version_info
+import aiohttp
+import discord
+from redbot.core import Config, VersionInfo, commands, version_info
 from redbot.core.bot import Red
-from .twitch_profile import TwitchProfile
-from .twitch_follower import TwitchFollower
-from .errors import TwitchError
+from redbot.core.utils import bounded_gather
 
+from .errors import TwitchError
+from .twitch_models import TwitchProfile, TwitchFollower
 
 log = logging.getLogger("red.Trusty-cogs.Twitch")
 
@@ -21,7 +20,7 @@ BASE_URL = "https://api.twitch.tv/helix"
 
 class TwitchAPI:
     """
-        Get twitch user information and post when a user gets new followers
+    Get twitch user information and post when a user gets new followers
     """
 
     config: Config
@@ -141,20 +140,6 @@ class TwitchAPI:
 
     #####################################################################################
 
-    async def make_user_embed(self, profile: TwitchProfile) -> discord.Embed:
-        # makes the embed for a twitch profile
-        em = discord.Embed(colour=int("6441A4", 16))
-        em.description = profile.description
-        url = "https://twitch.tv/{}".format(profile.login)
-        em.set_author(
-            name=profile.display_name, url=url, icon_url=profile.profile_image_url
-        )
-        em.set_image(url=profile.offline_image_url)
-        em.set_thumbnail(url=profile.profile_image_url)
-        footer_text = "{} Viewer count".format(profile.view_count)
-        em.set_footer(text=footer_text, icon_url=profile.profile_image_url)
-        return em
-
     async def make_follow_embed(
         self, account: TwitchProfile, profile: TwitchProfile, total_followers: int
     ):
@@ -184,6 +169,10 @@ class TwitchAPI:
         log.debug(f"{len(follows)} of {total}")
         return follows, total
 
+    async def get_all_streams(self):
+        """Returns all streams for followed users"""
+        raise NotImplementedError()
+
     async def get_profile_from_name(self, twitch_name: str) -> TwitchProfile:
         url = "{}/users?login={}".format(BASE_URL, twitch_name)
         return TwitchProfile.from_json(await self.get_response(url))
@@ -196,9 +185,23 @@ class TwitchAPI:
         # Gets the last 100 followers from twitch
         url = "{}/users/follows?to_id={}&first=100".format(BASE_URL, user_id)
         data = await self.get_response(url)
-        follows = [TwitchFollower.from_json(x) for x in data["data"]]
+        follows = [TwitchFollower(**x) for x in data["data"]]
         total = data["total"]
         return follows, total
+
+    async def get_new_clips(
+        self, user_id: str, started_at: Optional[datetime] = None
+    ) -> List[dict]:
+        """
+        Gets and returns the last 20 clips generated for a user
+        """
+        url = f"{BASE_URL}/clips?broadcaster_id={user_id}"
+        if started_at:
+            url += f"&started_at={started_at.isoformat()}Z"
+            url += f"&ended_at={datetime.utcnow().isoformat()}Z"
+        data = await self.get_response(url)
+        clips = data["data"]
+        return clips
 
     async def maybe_get_twitch_profile(
         self, ctx: commands.Context, twitch_name: str
@@ -229,6 +232,74 @@ class TwitchAPI:
                 account_return = account
         return account_return
 
+    async def check_followers(self, account: dict):
+        followed = await self.get_profile_from_id(account["id"])
+        followers, total = await self.get_new_followers(account["id"])
+        for follow in reversed(followers):
+            if follow.from_id not in account["followers"]:
+                try:
+                    profile = await self.get_profile_from_id(follow.from_id)
+                except Exception:
+                    log.error(f"Error getting twitch profile {follow.from_id}", exc_info=True)
+                log.info(
+                    f"{profile.login} Followed! {followed.display_name} "
+                    f"has {total} followers now."
+                )
+                em = await self.make_follow_embed(followed, profile, total)
+                for channel_id in account["channels"]:
+                    channel = self.bot.get_channel(id=channel_id)
+                    if not channel:
+                        continue
+                    if channel.permissions_for(channel.guild.me).embed_links:
+                        await channel.send(embed=em)
+                    else:
+                        text_msg = (
+                            f"{profile.display_name} has just " f"followed {account.display_name}!"
+                        )
+                        await channel.send(text_msg)
+                async with self.config.twitch_accounts() as check_accounts:
+                    check_accounts.remove(account)
+                    account["followers"].append(follow.from_id)
+                    check_accounts.append(account)
+
+    async def send_clips_update(self, clip: dict, clip_data: dict):
+        tasks = []
+        created_at = datetime.strptime(clip["created_at"], "%Y-%m-%dT%H:%M:%SZ")
+        age = datetime.utcnow() - created_at
+        msg = f"{clip_data['display_name']} has a new clip! {clip['url']}"
+        for channel, info in clip_data["channels"].items():
+            channel = self.bot.get_channel(int(channel))
+            if not channel:
+                continue
+            if info["check_back"] and age.total_seconds() > info["check_back"]:
+                continue
+            if info["view_count"] and clip["view_count"] < info["view_count"]:
+                continue
+            if clip["id"] in info["clips"]:
+                log.debug("skipping clip")
+                continue
+            if channel and channel.permissions_for(channel.guild.me).send_messages:
+                tasks.append(channel.send(msg))
+            async with self.config.twitch_clips() as saved:
+                if "clips" not in saved[clip_data["id"]]["channels"][f"{channel.id}"]:
+                    saved[clip_data["id"]]["channels"][f"{channel.id}"]["clips"] = [clip["id"]]
+                else:
+                    saved[clip_data["id"]]["channels"][f"{channel.id}"]["clips"].append(clip["id"])
+        await bounded_gather(*tasks)
+
+    async def check_clips(self):
+        followed = await self.config.twitch_clips()
+        for user_id, clip_data in followed.items():
+            log.debug(f"Checking for new clips from {clip_data['display_name']}")
+            try:
+                now = datetime.utcnow() + timedelta(days=-8)
+                clips = await self.get_new_clips(user_id, now)
+            except Exception:
+                log.exception(f"Error getting twitch clips {user_id}", exc_info=True)
+                continue
+            for clip in clips:
+                await self.send_clips_update(clip, clip_data)
+
     async def check_for_new_followers(self) -> None:
         # Checks twitch every minute for new followers
         if version_info >= VersionInfo.from_str("3.2.0"):
@@ -236,38 +307,12 @@ class TwitchAPI:
         else:
             await self.bot.wait_until_ready()
         while self is self.bot.get_cog("Twitch"):
-            check_accounts = await self.config.twitch_accounts()
-            for account in check_accounts:
-                followed = await self.get_profile_from_id(account["id"])
-                followers, total = await self.get_new_followers(account["id"])
-                for follow in reversed(followers):
-                    if follow.from_id not in account["followers"]:
-                        try:
-                            profile = await self.get_profile_from_id(follow.from_id)
-                        except Exception:
-                            log.error(
-                                f"Error getting twitch profile {follow.from_id}", exc_info=True
-                            )
-                        log.info(
-                            f"{profile.login} Followed! {followed.display_name} "
-                            f"has {total} followers now."
-                        )
-                        em = await self.make_follow_embed(followed, profile, total)
-                        for channel_id in account["channels"]:
-                            channel = self.bot.get_channel(id=channel_id)
-                            if not channel:
-                                continue
-                            if channel.permissions_for(channel.guild.me).embed_links:
-                                await channel.send(embed=em)
-                            else:
-                                text_msg = (
-                                    f"{profile.display_name} has just "
-                                    f"followed {account.display_name}!"
-                                )
-                                await channel.send(text_msg)
-                        check_accounts.remove(account)
-                        account["followers"].append(follow.from_id)
-                        check_accounts.append(account)
-                        await self.config.twitch_accounts.set(check_accounts)
-
+            follow_accounts = await self.config.twitch_accounts()
+            for account in follow_accounts:
+                await self.check_followers(account)
+            try:
+                await self.check_clips()
+                pass
+            except Exception:
+                log.exception("Error checking new clips")
             await asyncio.sleep(60)

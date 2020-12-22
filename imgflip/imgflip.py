@@ -1,11 +1,12 @@
-from redbot.core import commands, checks, Config
+import logging
+import re
+from typing import Dict, List, Tuple
+
 import aiohttp
-from typing import List, Dict, Tuple
-from redbot.core.utils.chat_formatting import pagify
 from discord.ext.commands.converter import Converter
 from discord.ext.commands.errors import BadArgument
-import re
-import logging
+from redbot.core import Config, checks, commands
+from redbot.core.utils.chat_formatting import pagify
 
 SEARCH_URL = "https://api.imgflip.com/get_memes"
 CAPTION_URL = "https://api.imgflip.com/caption_image"
@@ -49,12 +50,13 @@ class Meme(Converter):
 
 class ImgFlipAPIError(Exception):
     """ImgFlip API Error"""
+
     pass
 
 
 class Imgflip(commands.Cog):
     """
-        Generate memes from imgflip.com API
+    Generate memes from imgflip.com API
     """
 
     __author__ = ["Twentysix", "TrustyJAID"]
@@ -68,10 +70,16 @@ class Imgflip(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     async def get_meme(
         self, meme: int, boxes: List[Dict[str, str]], username: str, password: str
@@ -120,12 +128,12 @@ class Imgflip(commands.Cog):
     async def meme(self, ctx: commands.Context, meme: Meme, *, text: str) -> None:
         """Create custom memes from imgflip
 
-            `meme_name` can be the name of the meme to use or the ID from imgflip
-            `text` is lines of text separated by `|`
-            Do `[p]getmemes` to see which meme names will work
+        `meme_name` can be the name of the meme to use or the ID from imgflip
+        `text` is lines of text separated by `|`
+        Do `[p]getmemes` to see which meme names will work
 
-            You can get meme ID's from https://imgflip.com/memetemplates
-            click blank template and use the Template ID in place of meme_name
+        You can get meme ID's from https://imgflip.com/memetemplates
+        click blank template and use the Template ID in place of meme_name
         """
         user_pass = await self.config.all()
         if not user_pass["username"] or not user_pass["password"]:
@@ -135,14 +143,10 @@ class Imgflip(commands.Cog):
             )
         await ctx.trigger_typing()
         text = "".join(
-            ctx.message.clean_content.replace(
-                f"{ctx.prefix}{ctx.invoked_with} {meme[1]}", ""
-            )
+            ctx.message.clean_content.replace(f"{ctx.prefix}{ctx.invoked_with} {meme[1]}", "")
         )
         search_text: List[str] = re.split(r"\|", text)
-        boxes = [
-            {"text": v, "color": "#ffffff", "outline_color": "#000000"} for v in search_text
-        ]
+        boxes = [{"text": v, "color": "#ffffff", "outline_color": "#000000"} for v in search_text]
         try:
             url = await self.get_meme(meme[0], boxes, user_pass["username"], user_pass["password"])
         except Exception:

@@ -1,18 +1,16 @@
-import re
 import logging
+import re
+from datetime import datetime, timedelta
+from random import choice as rand_choice
+from typing import List, Optional, Pattern, Union, cast
 
 import discord
-
-from random import choice as rand_choice
-from datetime import datetime
-from typing import List, Union, Pattern, Optional, cast
-
-from redbot.core import commands, Config
+from redbot import VersionInfo, version_info
+from redbot.core import Config, commands
 from redbot.core.bot import Red
+from redbot.core.i18n import Translator, cog_i18n
 from redbot.core.utils.chat_formatting import humanize_list
 from redbot.core.utils.common_filters import filter_mass_mentions
-from redbot.core.i18n import Translator, cog_i18n
-
 
 RE_CTX: Pattern = re.compile(r"{([^}]+)\}")
 RE_POS: Pattern = re.compile(r"{((\d+)[^.}]*(\.[^:}]+)?[^}]*)\}")
@@ -47,13 +45,18 @@ class Events:
         is_welcome: bool,
     ) -> str:
         results = RE_POS.findall(msg)
-        log.debug(results)
         raw_response = msg
         user_count = self.today_count[guild.id] if guild.id in self.today_count else 1
         raw_response = raw_response.replace("{count}", str(user_count))
-
+        has_filter = self.bot.get_cog("Filter")
+        filter_setting = await self.config.guild(guild).FILTER_SETTING()
+        if filter_setting is None:
+            filter_setting = "[Redacted]"
+        if isinstance(member, list):
+            username = humanize_list(member)
+        else:
+            username = str(member)
         for result in results:
-            log.debug(result)
             if int(result[1]) == 1:
                 param = self.transform_arg(result[0], result[2], guild)
             elif int(result[1]) == 0:
@@ -67,8 +70,20 @@ class Events:
                         param = humanize_list(params)
                     else:
                         param = params[0]
-            log.debug(param)
             raw_response = raw_response.replace("{" + result[0] + "}", param)
+        if has_filter:
+            bad_name = await has_filter.filter_hits(username, guild)
+            if bad_name:
+                for word in bad_name:
+                    raw_response = re.sub(rf"(?i){word}", filter_setting, raw_response)
+                    if isinstance(member, list):
+                        raw_response = re.sub(
+                            "|".join(m.mention for m in member), filter_setting, raw_response
+                        )
+                    else:
+                        raw_response = re.sub(
+                            rf"(?i){member.mention}", filter_setting, raw_response
+                        )
         if await self.config.guild(guild).JOINED_TODAY() and is_welcome:
             raw_response = _("{raw_response}\n\n{count} users joined today!").format(
                 raw_response=raw_response, count=user_count
@@ -84,6 +99,13 @@ class Events:
     ) -> discord.Embed:
         EMBED_DATA = await self.config.guild(guild).EMBED_DATA()
         converted_msg = await self.convert_parms(member, guild, msg, is_welcome)
+        has_filter = self.bot.get_cog("Filter")
+        username = str(member)
+        if has_filter:
+            bad_words = await has_filter.filter_hits(username, guild)
+            if bad_words:
+                for word in bad_words:
+                    username = username.replace(word, "[Redacted]")
         em = discord.Embed(description=converted_msg)
         if isinstance(member, discord.Member):
             em.set_thumbnail(url=member.avatar_url_as(format="png"))
@@ -104,8 +126,12 @@ class Events:
             elif url == "avatar" and isinstance(member, discord.Member):
                 url = member.avatar_url
             em.set_thumbnail(url=url)
-        if (is_welcome and EMBED_DATA["image"]) or (not is_welcome and EMBED_DATA["image_goodbye"]):
-            url = EMBED_DATA["image"] if is_welcome else EMBED_DATA["image_goodbye"]
+        if EMBED_DATA["image"] or EMBED_DATA["image_goodbye"]:
+            url = ""
+            if EMBED_DATA["image"] and is_welcome:
+                url = EMBED_DATA["image"]
+            if EMBED_DATA["image_goodbye"] and not is_welcome:
+                url = EMBED_DATA["image_goodbye"]
             if url == "guild":
                 url = guild.icon_url
             elif url == "splash":
@@ -121,11 +147,11 @@ class Events:
                 url = guild.splash_url
             elif url == "avatar" and isinstance(member, discord.Member):
                 url = member.avatar_url
-            em.set_author(name=str(member), icon_url=url)
+            em.set_author(name=username, icon_url=url)
         if EMBED_DATA["timestamp"]:
             em.timestamp = datetime.utcnow()
         if EMBED_DATA["author"] and isinstance(member, discord.Member):
-            em.set_author(name=str(member), icon_url=member.avatar_url)
+            em.set_author(name=username, icon_url=member.avatar_url)
         return em
 
     @commands.Cog.listener()
@@ -135,8 +161,21 @@ class Events:
             return
         if guild is None:
             return
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         if member.bot:
             return await self.bot_welcome(member, guild)
+        td = timedelta(days=await self.config.guild(guild).MINIMUM_DAYS())
+        if (datetime.utcnow() - member.created_at) <= td:
+            log.info(_("Member joined with an account newer than required days."))
+            return
+        has_filter = self.bot.get_cog("Filter")
+        filter_setting = await self.config.guild(guild).FILTER_SETTING()
+        if has_filter and filter_setting is None:
+            if await has_filter.filter_hits(member.name, guild):
+                log.info(_("Member joined with a bad username."))
+                return
 
         if datetime.utcnow().date() > self.today_count["now"].date():
             self.today_count = {"now": datetime.utcnow()}
@@ -161,6 +200,12 @@ class Events:
         msg = bot_welcome or rand_choice(await self.config.guild(guild).GREETING())
         channel = await self.get_welcome_channel(member, guild)
         is_embed = await self.config.guild(guild).EMBED()
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            mentions = await self.config.guild(guild).MENTIONS()
+            sanitize = {"allowed_mentions": discord.AllowedMentions(**mentions)}
+        else:
+            sanitize = {}
+
         if bot_role:
             try:
                 role = cast(discord.abc.Snowflake, guild.get_role(bot_role))
@@ -181,14 +226,12 @@ class Events:
             if is_embed and channel.permissions_for(guild.me).embed_links:
                 em = await self.make_embed(member, guild, msg, False)
                 if await self.config.guild(guild).EMBED_DATA.mention():
-                    await channel.send(member.mention, embed=em)
+                    await channel.send(member.mention, embed=em, **sanitize)
                 else:
                     await channel.send(embed=em)
             else:
                 await channel.send(
-                    filter_mass_mentions(
-                        await self.convert_parms(member, guild, bot_welcome, False)
-                    )
+                    await self.convert_parms(member, guild, bot_welcome, False), **sanitize
                 )
 
     async def get_welcome_channel(
@@ -229,23 +272,30 @@ class Events:
         is_embed = await self.config.guild(guild).EMBED()
         delete_after = await self.config.guild(guild).DELETE_AFTER_GREETING()
         save_msg = None
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            mentions = await self.config.guild(guild).MENTIONS()
+            sanitize = {"allowed_mentions": discord.AllowedMentions(**mentions)}
+        else:
+            sanitize = {}
 
         if await self.config.guild(guild).DELETE_PREVIOUS_GREETING():
             old_id = await self.config.guild(guild).LAST_GREETING()
             if channel is not None and old_id is not None:
+                old_msg = None
                 try:
                     old_msg = await channel.fetch_message(old_id)
-                    await old_msg.delete()
                 except discord.errors.NotFound:
                     pass
                 except discord.errors.Forbidden:
                     await self.config.guild(guild).DELETE_PREVIOUS_GREETING.set(False)
+                if old_msg:
+                    await old_msg.delete()
         # whisper the user if needed
         if not await self.config.guild(guild).GROUPED():
             if await self.config.guild(guild).WHISPER():
                 try:
                     if is_embed:
-                        em = await self.make_embed(member, guild, msg, False)
+                        em = await self.make_embed(member, guild, msg, True)
                         if await self.config.guild(guild).EMBED_DATA.mention():
                             await member.send(member.mention, embed=em)  # type: ignore
                         else:
@@ -275,18 +325,27 @@ class Events:
                         humanize_list([m.mention for m in members]),
                         embed=em,
                         delete_after=delete_after,
+                        **sanitize,
                     )
                 else:
                     member = cast(discord.Member, member)
                     save_msg = await channel.send(
-                        str(member.mention), embed=em, delete_after=delete_after
+                        str(member.mention),
+                        embed=em,
+                        delete_after=delete_after,
+                        **sanitize,
                     )
             else:
-                save_msg = await channel.send(embed=em, delete_after=delete_after)
+                save_msg = await channel.send(
+                    embed=em,
+                    delete_after=delete_after,
+                    **sanitize,
+                )
         else:
             save_msg = await channel.send(
-                filter_mass_mentions(await self.convert_parms(member, guild, msg, True)),
+                await self.convert_parms(member, guild, msg, True),
                 delete_after=delete_after,
+                **sanitize,
             )
         if save_msg is not None:
             await self.config.guild(guild).LAST_GREETING.set(save_msg.id)
@@ -298,7 +357,9 @@ class Events:
             return
         if guild is None:
             return
-
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         if await self.config.guild(guild).GROUPED():
             if guild.id not in self.joined:
                 self.joined[guild.id] = []
@@ -311,6 +372,11 @@ class Events:
         is_embed = await self.config.guild(guild).EMBED()
         delete_after = await self.config.guild(guild).DELETE_AFTER_GOODBYE()
         save_msg = None
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            mentions = await self.config.guild(guild).GOODBYE_MENTIONS()
+            sanitize = {"allowed_mentions": discord.AllowedMentions(**mentions)}
+        else:
+            sanitize = {}
 
         # grab the welcome channel
         # guild_settings = await self.config.guild(guild).guild_settings()
@@ -326,14 +392,16 @@ class Events:
         if await self.config.guild(guild).DELETE_PREVIOUS_GOODBYE():
             old_id = await self.config.guild(guild).LAST_GOODBYE()
             if channel is not None and old_id is not None:
+                old_msg = None
                 try:
                     old_msg = await channel.fetch_message(old_id)
-                    await old_msg.delete()
                 except discord.errors.NotFound:
                     log.debug(_("Message not found for deletion."))
                     pass
                 except discord.errors.Forbidden:
                     await self.config.guild(guild).DELETE_PREVIOUS_GOODBYE.set(False)
+                if old_msg:
+                    await old_msg.delete()
 
         if not channel.permissions_for(guild.me).send_messages:
             log.info(_("Permissions Error in {guild}"))
@@ -343,14 +411,15 @@ class Events:
                 em = await self.make_embed(member, guild, msg, False)
                 if await self.config.guild(guild).EMBED_DATA.mention():
                     save_msg = await channel.send(
-                        member.mention, embed=em, delete_after=delete_after
+                        member.mention, embed=em, delete_after=delete_after, **sanitize
                     )
                 else:
                     save_msg = await channel.send(embed=em, delete_after=delete_after)
             else:
                 save_msg = await channel.send(
-                    filter_mass_mentions(await self.convert_parms(member, guild, msg, False)),
+                    await self.convert_parms(member, guild, msg, False),
                     delete_after=delete_after,
+                    **sanitize,
                 )
         if save_msg is not None:
             await self.config.guild(guild).LAST_GOODBYE.set(save_msg.id)
@@ -365,8 +434,12 @@ class Events:
         guild = ctx.message.guild
         guild_settings = await self.config.guild(guild).get_raw()
         # log.info(guild_settings)
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            mentions = await self.config.guild(guild).MENTIONS()
+            sanitize = {"allowed_mentions": discord.AllowedMentions(**mentions)}
+        else:
+            sanitize = {}
         channel = guild.get_channel(guild_settings["CHANNEL"])
-        send_count = not leave
         if leave:
             channel = guild.get_channel(guild_settings["LEAVE_CHANNEL"])
         rand_msg = msg or rand_choice(guild_settings["GREETING"])
@@ -380,6 +453,7 @@ class Events:
             rand_msg = default_bot_msg
         if rand_msg is None and leave:
             rand_msg = default_goodbye
+        is_welcome = not leave
         is_embed = guild_settings["EMBED"]
         member = ctx.message.author
         whisper_settings = guild_settings["WHISPER"]
@@ -388,16 +462,20 @@ class Events:
             await ctx.send(msg)
             return
         if channel is None:
-            await ctx.send(_("`Sending a testing message to ") + "` DM")
+            await ctx.send(_("`Sending a testing message to ") + "` DM", **sanitize)
         else:
-            await ctx.send(_("`Sending a testing message to ") + "`{0.mention}".format(channel))
+            await ctx.send(
+                _("`Sending a testing message to ") + "`{0.mention}".format(channel), **sanitize
+            )
         if not bot and guild_settings["WHISPER"]:
             if is_embed:
-                em = await self.make_embed(member, guild, rand_msg, False)
+                em = await self.make_embed(member, guild, rand_msg, is_welcome)
                 await ctx.author.send(embed=em, delete_after=60)
             else:
                 await ctx.author.send(
-                    await self.convert_parms(member, guild, rand_msg, False), delete_after=60
+                    await self.convert_parms(member, guild, rand_msg, is_welcome),
+                    delete_after=60,
+                    **sanitize,
                 )
             if guild_settings["WHISPER"] != "BOTH":
                 return
@@ -407,20 +485,19 @@ class Events:
             if guild_settings["GROUPED"]:
                 member = [ctx.author, ctx.me]
             if is_embed and channel.permissions_for(guild.me).embed_links:
-                em = await self.make_embed(member, guild, rand_msg, send_count)
+                em = await self.make_embed(member, guild, rand_msg, is_welcome)
                 if await self.config.guild(guild).EMBED_DATA.mention():
                     if guild_settings["GROUPED"]:
                         await channel.send(
                             humanize_list([m.mention for m in member]), embed=em, delete_after=60
                         )
                     else:
-                        await channel.send(member.mention, embed=em, delete_after=60)
+                        await channel.send(member.mention, embed=em, delete_after=60, **sanitize)
                 else:
-                    await channel.send(embed=em, delete_after=60)
+                    await channel.send(embed=em, delete_after=60, **sanitize)
             else:
                 await channel.send(
-                    filter_mass_mentions(
-                        await self.convert_parms(member, guild, rand_msg, send_count)
-                    ),
+                    await self.convert_parms(member, guild, rand_msg, is_welcome),
                     delete_after=60,
+                    **sanitize,
                 )

@@ -1,23 +1,21 @@
-import logging
 import asyncio
 import contextlib
-import discord
+import logging
 import re
-
-from typing import Union, List
-from datetime import timedelta
 from copy import copy
+from datetime import timedelta
+from typing import List, Union
+
+import discord
 from discord.ext.commands.converter import IDConverter
 from discord.ext.commands.errors import BadArgument
-
 from redbot.core import Config, checks, commands
-from redbot.core.utils.chat_formatting import pagify, box
-from redbot.core.utils.antispam import AntiSpam
 from redbot.core.bot import Red
 from redbot.core.i18n import Translator, cog_i18n
+from redbot.core.utils.antispam import AntiSpam
+from redbot.core.utils.chat_formatting import box, pagify
 from redbot.core.utils.predicates import MessagePredicate
 from redbot.core.utils.tunnel import Tunnel
-
 
 _ = Translator("Reports", __file__)
 
@@ -85,7 +83,7 @@ class ValidEmoji(IDConverter):
 @cog_i18n(_)
 class Reports(commands.Cog):
     """
-        Redbot Core's default reports cog with some modifications
+    Redbot Core's default reports cog with some modifications
     """
 
     default_guild_settings = {
@@ -122,6 +120,12 @@ class Reports(commands.Cog):
         self.tunnel_store = {}
         # (guild, ticket#):
         #   {'tun': Tunnel, 'msgs': List[int]}
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     @property
     def tunnels(self):
@@ -378,9 +382,13 @@ class Reports(commands.Cog):
         """
         guild = self.bot.get_guild(payload.guild_id)
         report_emoji = await self.config.guild(guild).report_emoji()
+        if not report_emoji:
+            return
         if report_emoji in str(payload.emoji):
             reporter = guild.get_member(payload.user_id)
             if reporter.bot:
+                return
+            if not await self.bot.allowed_by_whitelist_blacklist(reporter):
                 return
             channel = guild.get_channel(payload.channel_id)
             try:
@@ -396,10 +404,9 @@ class Reports(commands.Cog):
                 em = await self._build_embed(reporter, message)
                 await report_channel.send(embed=em)
             else:
-                msg = (
-                    f"{reporter} has reported {message.author}\n"
-                    f"> {message.content}"
-                )[:len(message.jump_url)+5]
+                msg = (f"{reporter} has reported {message.author}\n" f"> {message.content}")[
+                    : len(message.jump_url) + 5
+                ]
                 await report_channel.send(msg + f"\n\n{message.jump_url}")
 
         if not str(payload.emoji) == "\N{NEGATIVE SQUARED CROSS MARK}":
@@ -417,7 +424,9 @@ class Reports(commands.Cog):
             )
             self.tunnel_store.pop(t[0], None)
 
-    async def _build_embed(self, reporter: discord.Member, message: discord.Message) -> discord.Embed:
+    async def _build_embed(
+        self, reporter: discord.Member, message: discord.Message
+    ) -> discord.Embed:
         channel = message.channel
         author = message.author
         em = discord.Embed(timestamp=message.created_at)
@@ -425,7 +434,7 @@ class Reports(commands.Cog):
         em.set_author(
             name=f"{reporter} has reported {author}",
             url=message.jump_url,
-            icon_url=str(author.avatar_url)
+            icon_url=str(author.avatar_url),
         )
         if message.attachments != []:
             em.set_image(url=message.attachments[0].url)

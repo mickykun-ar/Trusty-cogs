@@ -1,13 +1,12 @@
-import discord
+import logging
 import random
 import string
-import logging
-
 from typing import Optional, cast
 
-from redbot.core import commands, checks, Config
+import discord
+from redbot import VersionInfo, version_info
+from redbot.core import Config, checks, commands
 from redbot.core.i18n import Translator, cog_i18n
-
 
 default_settings = {
     "ENABLED": False,
@@ -32,12 +31,12 @@ if listener is None:  # thanks Sinbad
 @cog_i18n(_)
 class Autorole(commands.Cog):
     """
-        Autorole commands. Rewritten for V3 from
-        https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/autorole/autorole.py
+    Autorole commands. Rewritten for V3 from
+    https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/autorole/autorole.py
     """
 
     __author__ = ["Lunar-Dust", "TrustyJAID"]
-    __version__ = "1.3.0"
+    __version__ = "1.3.2"
 
     def __init__(self, bot):
         self.bot = bot
@@ -47,10 +46,16 @@ class Autorole(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     async def _no_perms(self, channel: Optional[discord.TextChannel] = None) -> None:
         m = _(
@@ -72,18 +77,22 @@ class Autorole(commands.Cog):
 
     async def get_colour(self, channel: discord.TextChannel) -> discord.Colour:
         try:
+            return await self.bot.get_embed_colour(channel)
+        except AttributeError:
             if await self.bot.db.guild(channel.guild).use_bot_color():
                 return channel.guild.me.colour
             else:
                 return await self.bot.db.color()
-        except AttributeError:
-            return await self.bot.get_embed_colour(channel)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         guild = message.guild
         if not guild:
             return
+
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         user = cast(discord.Member, message.author)
         channel = message.channel
         agree_channel = cast(
@@ -130,8 +139,6 @@ class Autorole(commands.Cog):
         if key is None:
             key = "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
             # <3 Stackoverflow http://stackoverflow.com/questions/2257441/random-string-generation-with-upper-case-letters-and-digits-in-python/23728630#23728630
-
-
 
         ch = cast(
             discord.TextChannel, guild.get_channel(await self.config.guild(guild).AGREE_CHANNEL())
@@ -183,21 +190,19 @@ class Autorole(commands.Cog):
     @commands.bot_has_permissions(manage_roles=True)
     async def autorole(self, ctx: commands.Context) -> None:
         """
-            Change settings for autorole
+        Change settings for autorole
 
-            Requires the manage roles permission
+        Requires the manage roles permission
         """
         pass
 
     @autorole.command(name="info")
     async def autorole_info(self, ctx: commands.Context) -> None:
         """
-            Display current autorole info
+        Display current autorole info
         """
         guild = ctx.message.guild
         enabled = await self.config.guild(guild).ENABLED()
-        if not enabled:
-            return
         roles = await self.config.guild(guild).ROLE()
         msg = await self.config.guild(guild).AGREE_MSG()
         key = await self.config.guild(guild).AGREE_KEY()
@@ -244,7 +249,7 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def toggle(self, ctx: commands.Context) -> None:
         """
-            Enables/Disables autorole
+        Enables/Disables autorole
         """
         guild = ctx.message.guild
         if await self.config.guild(guild).ROLE() is None:
@@ -262,9 +267,9 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def role(self, ctx: commands.Context, *, role: discord.Role) -> None:
         """
-            Add a role for autorole to assign.
+        Add a role for autorole to assign.
 
-            You can use this command multiple times to add multiple roles.
+        You can use this command multiple times to add multiple roles.
         """
         guild = ctx.message.guild
         roles = await self.config.guild(guild).ROLE()
@@ -289,7 +294,7 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def remove(self, ctx: commands.Context, *, role: discord.Role) -> None:
         """
-            Remove a role from the autorole.
+        Remove a role from the autorole.
         """
         guild = ctx.message.guild
         roles = await self.config.guild(guild).ROLE()
@@ -304,21 +309,21 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def agreement(self, ctx: commands.Context) -> None:
         """
-            Set the channel and message that will be used for accepting the rules.
+        Set the channel and message that will be used for accepting the rules.
 
-            `channel` is the channel they must type the key in to get the role.
-            `key` is the message they must type to gain access and must be in quotes.
-            `msg` is the message DM'd to them when they join.
+        `channel` is the channel they must type the key in to get the role.
+        `key` is the message they must type to gain access and must be in quotes.
+        `msg` is the message DM'd to them when they join.
 
-            `{key}` must be included in the message so a user knows what to type in the channel.
+        `{key}` must be included in the message so a user knows what to type in the channel.
 
-            Optional additions to the message include:
-            `{channel}` Mentions the channel where they must include the agreement message.
-            `{mention}` Mentions the user incase they have DM permissions turned off this should be used.
-            `{name}` Says the member name if you don't want to ping them.
-            `{guild}` Says the servers current name.
+        Optional additions to the message include:
+        `{channel}` Mentions the channel where they must include the agreement message.
+        `{mention}` Mentions the user incase they have DM permissions turned off this should be used.
+        `{name}` Says the member name if you don't want to ping them.
+        `{guild}` Says the servers current name.
 
-            Entering nothing will disable these.
+        Entering nothing will disable these.
         """
         pass
 
@@ -328,9 +333,9 @@ class Autorole(commands.Cog):
         self, ctx: commands.Context, channel: discord.TextChannel = None
     ) -> None:
         """
-            Set the agreement channel
+        Set the agreement channel
 
-            Entering nothing will clear this.
+        Entering nothing will clear this.
         """
         guild = ctx.message.guild
         if await self.config.guild(guild).ROLE() == []:
@@ -350,7 +355,7 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def set_agreement_delete(self, ctx: commands.Context) -> None:
         """
-            Toggle automatically deleting the agreement message.
+        Toggle automatically deleting the agreement message.
         """
         delete_key = await self.config.guild(ctx.guild).DELETE_KEY()
         await self.config.guild(ctx.guild).DELETE_KEY.set(not delete_key)
@@ -363,9 +368,9 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def set_agreement_key(self, ctx: commands.Context, *, key: str = None) -> None:
         """
-            Set the agreement key
+        Set the agreement key
 
-            Entering nothing will clear this.
+        Entering nothing will clear this.
         """
 
         guild = ctx.message.guild
@@ -386,16 +391,16 @@ class Autorole(commands.Cog):
     @checks.admin_or_permissions(manage_roles=True)
     async def set_agreement_msg(self, ctx: commands.Context, *, message: str = None) -> None:
         """
-            Set the agreement message
-            `{key}` must be included in the message so a user knows what to type in the channel.
+        Set the agreement message
+        `{key}` must be included in the message so a user knows what to type in the channel.
 
-            Optional additions to the message include:
-            `{channel}` Mentions the channel where they must include the agreement message.
-            `{mention}` Mentions the user incase they have DM permissions turned off this should be used.
-            `{name}` Says the member name if you don't want to ping them.
-            `{guild}` Says the servers current name.
+        Optional additions to the message include:
+        `{channel}` Mentions the channel where they must include the agreement message.
+        `{mention}` Mentions the user incase they have DM permissions turned off this should be used.
+        `{name}` Says the member name if you don't want to ping them.
+        `{guild}` Says the servers current name.
 
-            Entering nothing will clear this.
+        Entering nothing will clear this.
         """
         guild = ctx.message.guild
         if await self.config.guild(guild).ROLE() == []:
@@ -409,7 +414,7 @@ class Autorole(commands.Cog):
             await ctx.send(_("Agreement message cleared"))
         else:
             await self.config.guild(guild).AGREE_MSG.set(message)
-            await ctx.send(_("Agreement key set to ") + message)
+            await ctx.send(_("Agreement message set to ") + message)
 
     @agreement.command(name="setup")
     @checks.admin_or_permissions(manage_roles=True)
@@ -422,21 +427,21 @@ class Autorole(commands.Cog):
         msg: str = None,
     ) -> None:
         """
-            Set the channel and message that will be used for accepting the rules.
+        Set the channel and message that will be used for accepting the rules.
 
-            `channel` is the channel they must type the key in to get the role.
-            `key` is the message they must type to gain access and must be in quotes.
-            `msg` is the message DM'd to them when they join.
+        `channel` is the channel they must type the key in to get the role.
+        `key` is the message they must type to gain access and must be in quotes.
+        `msg` is the message DM'd to them when they join.
 
-            `{key}` must be included in the message so a user knows what to type in the channel.
+        `{key}` must be included in the message so a user knows what to type in the channel.
 
-            Optional additions to the message include:
-            `{channel}` Mentions the channel where they must include the agreement message.
-            `{mention}` Mentions the user incase they have DM permissions turned off this should be used.
-            `{name}` Says the member name if you don't want to ping them.
-            `{guild}` Says the servers current name.
+        Optional additions to the message include:
+        `{channel}` Mentions the channel where they must include the agreement message.
+        `{mention}` Mentions the user incase they have DM permissions turned off this should be used.
+        `{name}` Says the member name if you don't want to ping them.
+        `{guild}` Says the servers current name.
 
-            Entering nothing will disable this.
+        Entering nothing will disable this.
         """
         guild = ctx.message.guild
         if await self.config.guild(guild).ROLE() == []:

@@ -1,28 +1,26 @@
-import discord
 import asyncio
-import logging
 import functools
-
-import tweepy as tw
-from typing import Tuple, Any, Optional, List
+import logging
 from datetime import datetime
 from html import unescape
 from io import BytesIO
+from typing import Any, List, Optional, Tuple
 
-
-from redbot.core import Config, checks, commands, VersionInfo, version_info
-from redbot.core.utils.chat_formatting import escape, pagify
+import discord
+import tweepy as tw
+from redbot import VersionInfo, version_info
+from redbot.core import Config, checks, commands
+from redbot.core.utils import bounded_gather
 from redbot.core.i18n import Translator, cog_i18n
+from redbot.core.utils.chat_formatting import escape, humanize_list, pagify
 
 from .tweet_entry import TweetEntry
-
 
 _ = Translator("Tweets", __file__)
 
 log = logging.getLogger("red.trusty-cogs.Tweets")
 
 
-@cog_i18n(_)
 class TweetListener(tw.StreamListener):
     def __init__(self, api, bot):
         super().__init__(api=api)
@@ -58,11 +56,11 @@ class TweetListener(tw.StreamListener):
 @cog_i18n(_)
 class Tweets(commands.Cog):
     """
-        Cog for displaying info from Twitter's API
+    Cog for displaying info from Twitter's API
     """
 
     __author__ = ["Palm__", "TrustyJAID"]
-    __version__ = "2.5.4"
+    __version__ = "2.6.6"
 
     def __init__(self, bot):
         self.bot = bot
@@ -76,34 +74,45 @@ class Tweets(commands.Cog):
             },
             "accounts": {},
             "error_channel": None,
+            "version": "0.0.0",
         }
         self.config.register_global(**default_global)
         self.config.register_channel(custom_embeds=True)
         self.mystream = None
         self.run_stream = True
-        self.twitter_loop = self.bot.loop.create_task(self.start_stream())
+        self.twitter_loop = None
         self.accounts = {}
         self.regular_embed_channels = []
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
 
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
+
     async def initialize(self):
         data = await self.config.accounts()
-        if type(data) == list:
-            for account in data:
+        if await self.config.version() < "2.6.0":
+            for name, account in data.items():
+                if "retweets" not in account:
+                    account["retweets"] = True
                 self.accounts[account["twitter_id"]] = account
             await self.config.accounts.set(self.accounts)
+            await self.config.version.set("2.6.0")
         else:
             self.accounts = await self.config.accounts()
         embed_channels = await self.config.all_channels()
         for c_id, settings in embed_channels.items():
             if not settings["custom_embeds"]:
                 self.regular_embed_channels.append(c_id)
+        self.twitter_loop = asyncio.create_task(self.start_stream())
 
     ###################################################################
     # Here is all the logic for handling tweets and tweet creation
@@ -198,10 +207,10 @@ class Tweets(commands.Cog):
             url=post_url,
             timestamp=status.created_at,
         )
-        em.set_footer(text="@" + username)
+        em.set_footer(text=f"@{username}")
         if hasattr(status, "retweeted_status"):
             em.set_author(
-                name=status.user.name + " Retweeted " + status.retweeted_status.user.name,
+                name=f"{status.user.name} Retweeted {status.retweeted_status.user.name}",
                 url=post_url,
                 icon_url=status.user.profile_image_url,
             )
@@ -260,6 +269,8 @@ class Tweets(commands.Cog):
             return
         if status.in_reply_to_screen_name and not self.accounts[str(user_id)]["replies"]:
             return
+        if hasattr(status, "retweeted_status") and not self.accounts[str(user_id)]["retweets"]:
+            return
         em = await self.build_tweet_embed(status)
         # channel_list = account.channel
         tasks = []
@@ -275,7 +286,7 @@ class Tweets(commands.Cog):
                 continue
             use_embed = channel_send.id not in self.regular_embed_channels
             tasks.append(self.post_tweet_status(channel_send, em, status, use_embed))
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await bounded_gather(*tasks, return_exceptions=True)
 
     async def post_tweet_status(
         self,
@@ -286,6 +297,9 @@ class Tweets(commands.Cog):
     ):
         username = status.user.screen_name
         post_url = f"https://twitter.com/{status.user.screen_name}/status/{status.id}"
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, channel_send.guild):
+                return
         try:
             if channel_send.permissions_for(channel_send.guild.me).embed_links:
                 if use_custom_embed:
@@ -319,7 +333,7 @@ class Tweets(commands.Cog):
         timeout: int = 30,
     ) -> None:
         """menu control logic for this taken from
-           https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
+        https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
         s = post_list[page]
         em = None
         if ctx.channel.permissions_for(ctx.me).embed_links:
@@ -387,9 +401,9 @@ class Tweets(commands.Cog):
     @checks.is_owner()
     async def send_tweet(self, ctx: commands.Context, *, message: str) -> None:
         """
-            Allows the owner to send tweets through discord
+        Allows the owner to send tweets through discord
 
-            Upload an image to send an image with it as well.
+        Upload an image to send an image with it as well.
         """
         try:
             api = await self.authenticate()
@@ -418,11 +432,11 @@ class Tweets(commands.Cog):
     @_tweets.command(name="trends")
     async def trends(self, ctx: commands.Context, *, location: str = "United States") -> None:
         """
-            Gets twitter trends for a given location
+        Gets twitter trends for a given location
 
-            You can provide a location and it will try to get
-            different trend information from that location
-            default is `United States`
+        You can provide a location and it will try to get
+        different trend information from that location
+        default is `United States`
         """
         api = await self.authenticate()
         try:
@@ -541,9 +555,9 @@ class Tweets(commands.Cog):
         self, ctx: commands.context, username: str, count: Optional[int] = 10, replies: bool = True
     ) -> None:
         """
-            Display a users tweets as a scrollable message
+        Display a users tweets as a scrollable message
 
-            defaults to 10 tweets
+        defaults to 10 tweets
         """
         msg_list = []
         api = await self.authenticate()
@@ -610,9 +624,9 @@ class Tweets(commands.Cog):
     @_autotweet.command(name="embeds")
     async def set_custom_embeds(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         """
-            Set a channel to use custom embeds for tweets or discords automatic ones.
+        Set a channel to use custom embeds for tweets or discords automatic ones.
 
-            (default is enabled for custom embeds)
+        (default is enabled for custom embeds)
         """
         current = await self.config.channel(channel).custom_embeds()
         if current:
@@ -638,30 +652,83 @@ class Tweets(commands.Cog):
         await ctx.send(_("Restarting the twitter stream."))
 
     @_autotweet.command(name="replies")
-    async def _replies(self, ctx: commands.context, username: str) -> None:
+    async def _replies(self, ctx: commands.context, *usernames: str) -> None:
         """
-            Toggle an accounts replies being posted
+        Toggle an accounts replies being posted
 
-            This is checked on `autotweet` as well as `gettweets`
+        This is checked on `autotweet` as well as `gettweets`
         """
-        username = username.lower()
-        edited_account = None
-        for user_id, accounts in self.accounts.items():
-            if accounts["twitter_name"].lower() == username:
-                edited_account = user_id
-        if edited_account is None:
-            await ctx.send(_("I am not following ") + username)
-            return
-        else:
-            # all_accounts.remove(edited_account)
-            replies = self.accounts[str(edited_account)]["replies"]
-            self.accounts[str(edited_account)]["replies"] = not replies
-
-            await self.config.accounts.set(self.accounts)
-            if self.accounts[str(edited_account)]["replies"]:
-                await ctx.send(_("Now posting replies from ") + username)
+        if len(usernames) == 0:
+            return await ctx.send_help()
+        added_replies = []
+        removed_treplies = []
+        for username in usernames:
+            username = username.lower()
+            edited_account = None
+            for user_id, accounts in self.accounts.items():
+                if accounts["twitter_name"].lower() == username:
+                    edited_account = user_id
+            if edited_account is None:
+                continue
             else:
-                await ctx.send(_("No longer posting replies from") + username)
+                # all_accounts.remove(edited_account)
+                replies = self.accounts[edited_account]["replies"]
+                self.accounts[edited_account]["replies"] = not replies
+                if replies:
+                    removed_treplies.append(username)
+                else:
+                    added_replies.append(username)
+        await self.config.accounts.set(self.accounts)
+        msg = ""
+        if added_replies:
+            msg += _("Now posting replies from {replies}\n").format(
+                replies=humanize_list(added_replies)
+            )
+        if removed_treplies:
+            msg += _("No longer posting replies from {replies}\n").format(
+                replies=humanize_list(removed_treplies)
+            )
+        await ctx.send(msg)
+
+    @_autotweet.command(name="retweets")
+    async def _retweets(self, ctx: commands.context, *usernames: str) -> None:
+        """
+        Toggle an accounts retweets being posted
+
+        This is checked on `autotweet` as well as `gettweets`
+        """
+        if len(usernames) == 0:
+            return await ctx.send_help()
+        added_retweets = []
+        removed_retweets = []
+        for username in usernames:
+            username = username.lower()
+            edited_account = None
+            for user_id, accounts in self.accounts.items():
+                if accounts["twitter_name"].lower() == username:
+                    edited_account = user_id
+            if edited_account is None:
+                await ctx.send(_("I am not following ") + username)
+                return
+            else:
+                # all_accounts.remove(edited_account)
+                retweets = self.accounts[edited_account]["retweets"]
+                self.accounts[edited_account]["retweets"] = not retweets
+                if retweets:
+                    removed_retweets.append(username)
+                else:
+                    added_retweets.append(username)
+        await self.config.accounts.set(self.accounts)
+        msg = ""
+        if added_retweets:
+            msg += _("Now posting retweets from {retweets}.").format(
+                retweets=humanize_list(added_retweets)
+            )
+        if removed_retweets:
+            msg += _("No longer posting retweets from {retweets}").format(
+                retweets=humanize_list(removed_retweets)
+            )
+        await ctx.send(msg)
 
     async def is_followed_account(self, twitter_id) -> Tuple[bool, Any]:
         followed_accounts = await self.config.accounts()
@@ -676,10 +743,10 @@ class Tweets(commands.Cog):
         self, ctx: commands.context, username: str, channel: discord.TextChannel = None
     ) -> None:
         """
-            Adds a twitter username to the specified channel
+        Adds a twitter username to the specified channel
 
-            `username` needs to be the @handle for the twitter username
-            `channel` has to be a valid server channel, defaults to the current channel
+        `username` needs to be the @handle for the twitter username
+        `channel` has to be a valid server channel, defaults to the current channel
         """
         user_id = None
         screen_name = None
@@ -741,21 +808,27 @@ class Tweets(commands.Cog):
             timestamp=ctx.message.created_at,
         )
         embed.set_author(name=guild.name, icon_url=guild.icon_url)
-        for channel in guild.channels:
-            account_list = ""
+        account_list = ""
+        for channel in guild.text_channels:
+            channel_accounts = []
             for user_id, account in self.accounts.items():
                 if channel.id in account["channel"]:
-                    account_list += account["twitter_name"] + ", "
-            if account_list != "":
-                embed.add_field(name=channel.name, value=account_list[:-2])
+                    channel_accounts.append(account["twitter_name"])
+            if channel_accounts:
+                account_list += f"{channel.mention}\n"
+                account_list += humanize_list(channel_accounts) + "\n"
+        pages = list(pagify(account_list, page_length=1024))
+        embed.description = "".join(pages[:2])
+        for page in pages[2:]:
+            embed.add_field(name=_("Autotweet list continued"), value=page)
         await ctx.send(embed=embed)
 
     async def add_account(
         self, channel: discord.TextChannel, user_id: int, screen_name: str
     ) -> bool:
         """
-            Adds a twitter account to the specified channel.
-            Returns False if it is already in the channel.
+        Adds a twitter account to the specified channel.
+        Returns False if it is already in the channel.
         """
         # followed_accounts = await self.config.accounts()
 
@@ -791,12 +864,12 @@ class Tweets(commands.Cog):
         channel: discord.TextChannel = None,
     ) -> None:
         """
-            Add an entire twitter list to a specified channel.
+        Add an entire twitter list to a specified channel.
 
-            The list must be public or the bot owner must own it.
-            `owner` is the owner of the list's @handle
-            `list_name` is the name of the list
-            `channel` is the channel where the tweets will be posted
+        The list must be public or the bot owner must own it.
+        `owner` is the owner of the list's @handle
+        `list_name` is the name of the list
+        `channel` is the channel where the tweets will be posted
         """
         api = await self.authenticate()
         try:
@@ -863,25 +936,26 @@ class Tweets(commands.Cog):
         channel: discord.TextChannel = None,
     ) -> None:
         """
-            Remove an entire twitter list from a specified channel.
+        Remove an entire twitter list from a specified channel.
 
-            The list must be public or the bot owner must own it.
-            `owner` is the owner of the list's @handle
-            `list_name` is the name of the list
-            `channel` is the channel where the tweets will be posted
+        The list must be public or the bot owner must own it.
+        `owner` is the owner of the list's @handle
+        `list_name` is the name of the list
+        `channel` is the channel where the tweets will be posted
         """
         api = await self.authenticate()
         try:
             fake_task = functools.partial(
                 self.get_tweet_list, api=api, owner=owner, list_name=list_name
             )
-            task = await ctx.bot.loop.run_in_executor(None, fake_task)
+            task = ctx.bot.loop.run_in_executor(None, fake_task)
             list_members = await asyncio.wait_for(task, timeout=30)
         except asyncio.TimeoutError:
             msg = _("Adding that tweet list took too long.")
             log.error(msg, exc_info=True)
             return await ctx.send(msg)
         except Exception:
+            log.exception("Error finding twitter list")
             msg = _("That `owner` and `list_name` " "don't appear to be available")
             await ctx.send(msg)
             return
@@ -934,10 +1008,10 @@ class Tweets(commands.Cog):
         self, ctx, username: str, channel: Optional[discord.TextChannel] = None
     ) -> None:
         """
-            Removes a twitter username to the specified channel
+        Removes a twitter username to the specified channel
 
-            `username` must be the users @handle
-            `channel` is the channel where the username is currently being posted
+        `username` must be the users @handle
+        `channel` is the channel where the username is currently being posted
         """
         username = username.lower()
         api = await self.authenticate()
@@ -964,7 +1038,7 @@ class Tweets(commands.Cog):
         """Command for setting required access information for the API.
 
         1. Visit https://apps.twitter.com and apply for a developer account.
-        2. Once your account is approved setup an application and follout the form
+        2. Once your account is approved setup an application and fillout the form
         3. Do `[p]tweetset creds consumer_key consumer_secret access_token access_secret`
         to the bot in a private channel (DM's preferred).
         """
@@ -985,7 +1059,7 @@ class Tweets(commands.Cog):
         await self.config.api.set(api)
         if ctx.channel.permissions_for(ctx.me).manage_messages:
             await ctx.message.delete()
-        await ctx.send(_("Set the access credentials!"))
+        await ctx.send(_("Access credentials have been set!"))
 
     def cog_unload(self):
         log.debug("Unloading tweets...")
@@ -998,7 +1072,3 @@ class Tweets(commands.Cog):
             self.mystream = None
             log.debug("Twitter stream disconnected.")
         log.debug("Tweets unloaded.")
-
-    __unload = cog_unload
-
-    __del__ = cog_unload

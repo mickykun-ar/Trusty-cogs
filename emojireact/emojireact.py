@@ -1,8 +1,10 @@
-import discord
-from redbot.core import commands, Config, checks
-from redbot.core.i18n import Translator, cog_i18n
-from .unicode_codes import UNICODE_EMOJI
 import re
+
+import discord
+from redbot.core import Config, checks, commands
+from redbot.core.i18n import Translator, cog_i18n
+
+from .unicode_codes import UNICODE_EMOJI
 
 _ = Translator("EmojiReactions", __file__)
 
@@ -13,7 +15,7 @@ UNICODE_RE = re.compile("|".join(rf"{re.escape(w)}" for w in UNICODE_EMOJI.keys(
 @cog_i18n(_)
 class EmojiReactions(commands.Cog):
     """
-        Automatically react to messages with emojis in them with the emoji
+    Automatically react to messages with emojis in them with the emoji
     """
 
     def __init__(self, bot):
@@ -22,11 +24,17 @@ class EmojiReactions(commands.Cog):
         self.config = Config.get_conf(self, 35677998656)
         self.config.register_guild(**default_guild)
 
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
+
     @commands.group()
     @checks.admin_or_permissions(manage_messages=True)
     async def emojireact(self, ctx):
         """
-            Automatically react to messages with emojis in them with the emoji
+        Automatically react to messages with emojis in them with the emoji
         """
         if ctx.invoked_subcommand is None:
             guild = ctx.message.guild

@@ -5,7 +5,8 @@
     ],
     "description" : "Automatically apply roles when a user joins the server.",
     "disabled" : false,
-    "hidden" : false,
+    "end_user_data_statement" : "This cog does not persistently store data or metadata about users.",
+    "hidden" : true,
     "install_msg" : "Thanks for installing.",
     "max_bot_version" : "0.0.0",
     "min_bot_version" : "3.1.8",
@@ -14,7 +15,7 @@
         7,
         2
     ],
-    "name" : "autorole",
+    "name" : "Autorole",
     "permissions" : [
         "manage_roles"
     ],

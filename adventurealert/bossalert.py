@@ -1,8 +1,8 @@
 import discord
-
-from redbot.core import commands, checks
+from redbot import VersionInfo, version_info
+from redbot.core import checks, commands
 from redbot.core.i18n import Translator
-from redbot.core.utils.chat_formatting import pagify, humanize_list
+from redbot.core.utils.chat_formatting import humanize_list, pagify
 
 from .abc import MixinMeta
 
@@ -76,6 +76,9 @@ class BossAlert(MixinMeta):
 
     @commands.Cog.listener()
     async def on_adventure_boss(self, ctx: commands.Context) -> None:
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, ctx.guild):
+                return
         roles = [f"<@&{rid}>" for rid in await self.config.guild(ctx.guild).roles()]
         users = [f"<@!{uid}>" for uid in await self.config.guild(ctx.guild).users()]
         guild_members = [m.id for m in ctx.guild.members]

@@ -1,18 +1,22 @@
-import discord
-import logging
 import asyncio
-import re
-from typing import List, Union, Tuple, Pattern
+import logging
+from typing import List, Pattern, Tuple, Union
 
+import discord
 from discord.ext.commands.converter import Converter, IDConverter, RoleConverter
 from discord.ext.commands.errors import BadArgument
-from redbot.core.i18n import Translator
 from redbot.core import commands
-from redbot.core.utils.predicates import ReactionPredicate
+from redbot.core.i18n import Translator
 from redbot.core.utils.menus import start_adding_reactions
+from redbot.core.utils.predicates import ReactionPredicate
 
 log = logging.getLogger("red.trusty-cogs.ReTrigger")
 _ = Translator("ReTrigger", __file__)
+
+try:
+    import regex as re
+except ImportError:
+    import re
 
 
 class MultiResponse(Converter):
@@ -34,6 +38,7 @@ class MultiResponse(Converter):
             "text",
             "filter",
             "delete",
+            "publish",
             "react",
             "rename",
             "command",
@@ -57,6 +62,8 @@ class MultiResponse(Converter):
         if result[0] in ["add_role", "remove_role"] and not my_perms.manage_roles:
             raise BadArgument(_('I require "Manage Roles" permission to use that.'))
         if result[0] == "filter" and not my_perms.manage_messages:
+            raise BadArgument(_('I require "Manage Messages" permission to use that.'))
+        if result[0] == "publish" and not my_perms.manage_messages:
             raise BadArgument(_('I require "Manage Messages" permission to use that.'))
         if result[0] == "ban" and not my_perms.ban_members:
             raise BadArgument(_('I require "Ban Members" permission to use that.'))
@@ -112,7 +119,7 @@ class MultiResponse(Converter):
 
 class Trigger:
     """
-        Trigger class to handle trigger objects
+    Trigger class to handle trigger objects
     """
 
     name: str
@@ -131,10 +138,14 @@ class Trigger:
     ignore_edits: bool
     ocr_search: bool
     delete_after: int
+    read_filenames: bool
 
     def __init__(self, name, regex, response_type, author, **kwargs):
         self.name = name
-        self.regex = re.compile(regex)
+        try:
+            self.regex = re.compile(regex)
+        except Exception:
+            raise
         self.response_type = response_type
         self.author = author
         self.enabled = kwargs.get("enabled", True)
@@ -150,6 +161,23 @@ class Trigger:
         self.ignore_edits = kwargs.get("ignore_edits", False)
         self.ocr_search = kwargs.get("ocr_search", False)
         self.delete_after = kwargs.get("delete_after", None)
+        self.read_filenames = kwargs.get("read_filenames", False)
+        self.chance = kwargs.get("chance", 0)
+
+    def enable(self):
+        """Explicitly enable this trigger"""
+        self.enabled = True
+
+    def disable(self):
+        """Explicitly disables this trigger"""
+        self.enabled = False
+
+    def toggle(self):
+        """Toggle whether or not this trigger is enabled."""
+        self.enabled = not self.enabled
+
+    def __repr__(self):
+        return "<ReTrigger name={0.name} author={0.author} pattern={0.regex.pattern}>".format(self)
 
     def __str__(self):
         """This is defined moreso for debugging purposes but may prove useful for elaborating
@@ -167,73 +195,6 @@ class Trigger:
             count=self.count,
             response=self.response_type,
         )
-        if self.ignore_commands:
-            info += _("Ignore commands: **{ignore}**\n").format(ignore=self.ignore_commands)
-        if "text" in self.response_type:
-            if self.multi_payload:
-                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "text")
-            else:
-                response = self.text
-            info += _("__Text__: ") + "**{response}**\n".format(response=response)
-        if "rename" in self.response_type:
-            if self.multi_payload:
-                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "text")
-            else:
-                response = self.text
-            info += _("__Rename__: ") + "**{response}**\n".format(response=response)
-        if "dm" in self.response_type:
-            if self.multi_payload:
-                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "dm")
-            else:
-                response = self.text
-            info += _("__DM__: ") + "**{response}**\n".format(response=response)
-        if "command" in self.response_type:
-            if self.multi_payload:
-                response = "\n".join(t[1] for t in self.multi_payload if t[0] == "command")
-            else:
-                response = self.text
-            info += _("__Command__: ") + "**{response}**\n".format(response=response)
-        if "react" in self.response_type:
-            if self.multi_payload:
-                emoji_response = [r for t in self.multi_payload for r in t[1:] if t[0] == "react"]
-            else:
-                emoji_response = self.text
-            server_emojis = "".join(f"<{e}>" for e in emoji_response if len(e) > 5)
-            unicode_emojis = "".join(e for e in emoji_response if len(e) < 5)
-            info += _("__Emojis__: ") + server_emojis + unicode_emojis + "\n"
-        if "add_role" in self.response_type:
-            if self.multi_payload:
-                role_response = [
-                    r for t in self.multi_payload for r in t[1:] if t[0] == "add_role"
-                ]
-            else:
-                role_response = self.text
-            if role_response:
-                info += _("__Roles Added__: ") + role_response + "\n"
-        if "remove_role" in self.response_type:
-            if self.multi_payload:
-                role_response = [
-                    r for t in self.multi_payload for r in t[1:] if t[0] == "remove_role"
-                ]
-            else:
-                role_response = self.text
-            if role_response:
-                info += _("__Roles Removed__: ") + role_response + "\n"
-        if self.whitelist:
-            info += _("__Whitelist__: ") + self.whitelist + "\n"
-        if self.blacklist:
-            info += _("__Blacklist__: ") + self.blacklist + "\n"
-        if self.cooldown:
-            time = self.cooldown["time"]
-            style = self.cooldown["style"]
-            info += _("Cooldown: ") + "**{}s per {}**\n".format(time, style)
-        if self.ocr_search:
-            info += _("OCR: **Enabled**\n")
-        if self.ignore_edits:
-            info += _("Ignoring edits: **Enabled**\n")
-        if self.delete_after:
-            info += _("Message deleted after: {time} seconds.\n").format(time=self.delete_after)
-        info += _("__Regex__: ") + self.regex.pattern
         return info
 
     async def to_json(self) -> dict:
@@ -255,6 +216,8 @@ class Trigger:
             "ignore_edits": self.ignore_edits,
             "ocr_search": self.ocr_search,
             "delete_after": self.delete_after,
+            "read_filenames": self.read_filenames,
+            "chance": self.chance,
         }
 
     @classmethod
@@ -267,6 +230,8 @@ class Trigger:
         ocr_search = False
         delete_after = None
         enabled = True
+        read_filenames = True
+        chance = 0
         if "cooldown" in data:
             cooldown = data["cooldown"]
         if type(data["response_type"]) is str:
@@ -287,6 +252,14 @@ class Trigger:
             delete_after = data["delete_after"]
         if "enabled" in data:
             enabled = data["enabled"]
+        if "read_filenames" in data:
+            read_filenames = data["read_filenames"]
+        if "delete" in response_type and type(data["text"]) == bool:
+            # replace old setting with new flag
+            read_filenames = data["text"]
+            data["text"] = ""
+        if "chance" in data:
+            chance = data["chance"]
         return cls(
             data["name"],
             data["regex"],
@@ -305,6 +278,8 @@ class Trigger:
             ignore_commands=ignore_commands,
             ignore_edits=ignore_edits,
             ocr_search=ocr_search,
+            read_filenames=read_filenames,
+            chance=chance,
         )
 
 

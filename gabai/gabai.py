@@ -1,10 +1,11 @@
-import discord
-from redbot.core import commands, checks, Config
 import asyncio
-import aiohttp
 from datetime import datetime
-from .gabuser import GabUser
 
+import aiohttp
+import discord
+from redbot.core import Config, checks, commands
+
+from .gabuser import GabUser
 
 __version__ = "2.0.1"
 __author__ = "TrustyJAID"
@@ -22,7 +23,7 @@ class NotFoundError(GabaiError):
 
 class Gabai(commands.Cog):
     """
-        Get information from gab.ai and display on discord
+    Get information from gab.ai and display on discord
     """
 
     def __init__(self, bot):
@@ -36,10 +37,16 @@ class Gabai(commands.Cog):
         self.rate_limit_remaining = 60
         self.rate_limit_time = 0
 
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
+
     @commands.group()
     async def gab(self, ctx):
         """
-            Add your gab tag to receive the role Anonymous
+        Add your gab tag to receive the role Anonymous
         """
         pass
 
@@ -143,7 +150,7 @@ class Gabai(commands.Cog):
         timeout: int = 30,
     ):
         """menu control logic for this taken from
-           https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
+        https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
         post = post_list[page]
         if ctx.channel.permissions_for(ctx.me).embed_links:
             em = await self.make_post_embed(post)
@@ -200,9 +207,9 @@ class Gabai(commands.Cog):
     @gab.command()
     async def feed(self, ctx, username: str, before_date: str = None):
         """
-            Gets a users feed from gab.ai before a specified date
+        Gets a users feed from gab.ai before a specified date
 
-            before_date must be in format DD-MM-YYYY
+        before_date must be in format DD-MM-YYYY
         """
         await ctx.trigger_typing()
         if before_date is None:
@@ -223,7 +230,7 @@ class Gabai(commands.Cog):
     @gab.command()
     async def user(self, ctx, username: str):
         """
-            Get user information from gab.ai
+        Get user information from gab.ai
         """
         await ctx.trigger_typing()
         try:
@@ -239,14 +246,14 @@ class Gabai(commands.Cog):
     @checks.is_owner()
     async def token(self, ctx, client_id: str, client_secret: str):
         """
-            Provide your client_id and client_secret
+        Provide your client_id and client_secret
 
-            1. go to https://gab.ai/settings/clients then Developer Apps
-            2. Select Create app
-            3. Fillout the form and set the redirect url to https://localhost
-            4. Provide the client_id and client_secret
-            5. The bot will provide a link and ask for the code
-            6. post everything after `?code=` in discord
+        1. go to https://gab.ai/settings/clients then Developer Apps
+        2. Select Create app
+        3. Fillout the form and set the redirect url to https://localhost
+        4. Provide the client_id and client_secret
+        5. The bot will provide a link and ask for the code
+        6. post everything after `?code=` in discord
         """
         await self.config.api_token.client_id.set(client_id)
         await self.config.api_token.client_secret.set(client_secret)

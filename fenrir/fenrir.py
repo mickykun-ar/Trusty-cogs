@@ -1,12 +1,12 @@
 import discord
-
-from redbot.core.bot import Red
+from redbot import VersionInfo, version_info
 from redbot.core import Config, checks, commands
+from redbot.core.bot import Red
 
 
 class Fenrir(commands.Cog):
     """
-        Various unreasonable commands inspired by Fenrir
+    Various unreasonable commands inspired by Fenrir
     """
 
     __version__ = "1.0.3"
@@ -25,10 +25,16 @@ class Fenrir(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     @commands.command()
     @checks.admin_or_permissions(kick_members=True)
@@ -106,9 +112,11 @@ class Fenrir(commands.Cog):
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         try:
             guild = self.bot.get_guild(payload.guild_id)
-        except Exception as e:
-            print(e)
+        except Exception:
             return
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         if payload.message_id in self.kicks:
             member = guild.get_member(payload.user_id)
             if member is None:
@@ -157,12 +165,10 @@ class Fenrir(commands.Cog):
             channel = guild.get_channel(payload.channel_id)
             try:
                 msg = await channel.fetch_message(payload.message_id)
-            except AttributeError:
-                msg = await channel.get_message(payload.message_id)
             except Exception:
                 return
             ctx = await self.bot.get_context(msg)
-            if await self.is_mod_or_admin(member) or str(payload.emoji) == "🐶":
+            if await self.is_mod_or_admin(member) or str(payload.emoji) == "\N{DOG FACE}":
                 try:
                     compliment = self.bot.get_command("compliment")
                 except AttributeError:

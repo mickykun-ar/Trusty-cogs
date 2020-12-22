@@ -1,10 +1,9 @@
-import discord
 from random import choice
-from redbot.core import commands
-from redbot.core.i18n import Translator, cog_i18n
-
 from typing import List
 
+import discord
+from redbot.core import commands
+from redbot.core.i18n import Translator, cog_i18n
 
 _ = Translator("Compliment", __file__)
 
@@ -135,17 +134,23 @@ class Compliment(commands.Cog):
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
 
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
+
     @commands.command()
     async def compliment(self, ctx: commands.Context, user: discord.Member = None) -> None:
         """
-            Compliment the user
+        Compliment the user
 
-            `user` the user you would like to compliment
+        `user` the user you would like to compliment
         """
         msg = " "
         if user:

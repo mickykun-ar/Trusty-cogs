@@ -1,16 +1,15 @@
-import re
 import logging
-import discord
-import unidecode
-
-from redbot.core.i18n import Translator
-from redbot.core import commands
-
-from discord.ext.commands.converter import IDConverter
-from discord.ext.commands.converter import _get_from_guilds
-from discord.ext.commands.errors import BadArgument
-
+import re
 from typing import List, Union
+
+import discord
+from unidecode import unidecode
+
+from rapidfuzz import process
+from discord.ext.commands.converter import IDConverter, _get_from_guilds
+from discord.ext.commands.errors import BadArgument
+from redbot.core import commands
+from redbot.core.i18n import Translator
 
 _ = Translator("ServerStats", __file__)
 log = logging.getLogger("red.trusty-cogs.ServerStats")
@@ -35,16 +34,20 @@ class FuzzyMember(IDConverter):
         if match is None:
             # Not a mention
             if guild:
-                for m in guild.members:
-                    if argument.lower() in unidecode.unidecode(m.display_name.lower()):
-                        # display_name so we can get the nick of the user first
-                        # without being NoneType and then check username if that matches
-                        # what we're expecting
-                        result.append(m)
-                        continue
-                    if argument.lower() in unidecode.unidecode(m.name.lower()):
-                        result.append(m)
-                        continue
+                for m in process.extract(
+                    argument,
+                    {m: unidecode(m.name) for m in guild.members},
+                    limit=None,
+                    score_cutoff=75,
+                ):
+                    result.append(m[2])
+                for m in process.extract(
+                    argument,
+                    {m: unidecode(m.nick) for m in guild.members if m.nick and m not in result},
+                    limit=None,
+                    score_cutoff=75,
+                ):
+                    result.append(m[2])
         else:
             user_id = int(match.group(1))
             if guild:
@@ -79,17 +82,51 @@ class GuildConverter(IDConverter):
             raise BadArgument(_("That option is only available for the bot owner."))
         if match is None:
             # Not a mention
-            for g in bot.guilds:
-                if argument.lower() in g.name.lower():
-                    # display_name so we can get the nick of the user first
-                    # without being NoneType and then check username if that matches
-                    # what we're expecting
-                    result = g
+            for g in process.extractOne(argument, {g: unidecode(g.name) for g in bot.guilds}):
+                result = g
         else:
             guild_id = int(match.group(1))
             result = bot.get_guild(guild_id)
 
         if result is None:
+            raise BadArgument('Guild "{}" not found'.format(argument))
+
+        return result
+
+
+class MultiGuildConverter(IDConverter):
+    """
+    This is a guild converter for fuzzy guild names which is used throughout
+    this cog to search for guilds by part of their name and will also
+    accept guild ID's
+
+    Guidance code on how to do this from:
+    https://github.com/Rapptz/discord.py/blob/rewrite/discord/ext/commands/converter.py#L85
+    https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/develop/redbot/cogs/mod/mod.py#L24
+    """
+
+    async def convert(self, ctx: commands.Context, argument: str) -> List[discord.Guild]:
+        bot = ctx.bot
+        match = self._get_id_match(argument)
+        result = []
+        if not await bot.is_owner(ctx.author):
+            # Don't need to be snooping other guilds unless we're
+            # the bot owner
+            raise BadArgument(_("That option is only available for the bot owner."))
+        if not match:
+            # Not a mention
+            for g in process.extract(
+                argument, {g: unidecode(g.name) for g in bot.guilds}, limit=None, score_cutoff=75
+            ):
+                result.append(g[2])
+        else:
+            guild_id = int(match.group(1))
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                raise BadArgument('Guild "{}" not found'.format(argument))
+            result.append(guild)
+
+        if not result:
             raise BadArgument('Guild "{}" not found'.format(argument))
 
         return result

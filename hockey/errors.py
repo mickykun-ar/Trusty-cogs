@@ -16,3 +16,7 @@ class NotAValidTeamError(HockeyError):
 
 class InvalidFileError(HockeyError):
     pass
+
+
+class NoSchedule(HockeyError):
+    pass

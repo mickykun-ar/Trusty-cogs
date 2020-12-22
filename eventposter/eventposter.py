@@ -1,12 +1,12 @@
-import discord
 import logging
+from typing import Literal, Optional, Union
 
-from typing import Union, Optional
-
-from redbot.core import commands, checks, Config, VersionInfo, version_info
-from redbot.core.utils.predicates import ReactionPredicate
+import discord
+from redbot import VersionInfo, version_info
+from redbot.core import Config, VersionInfo, checks, commands, version_info
+from redbot.core.utils.chat_formatting import humanize_list, pagify
 from redbot.core.utils.menus import start_adding_reactions
-from redbot.core.utils.chat_formatting import pagify, humanize_list
+from redbot.core.utils.predicates import ReactionPredicate
 
 from .event_obj import Event, ValidImage
 
@@ -22,7 +22,7 @@ EVENT_EMOJIS = [
 class EventPoster(commands.Cog):
     """Create admin approved events/announcements"""
 
-    __version__ = "1.6.0"
+    __version__ = "1.6.1"
     __author__ = "TrustyJAID"
 
     def __init__(self, bot):
@@ -43,13 +43,38 @@ class EventPoster(commands.Cog):
         self.config.register_member(**default_user)
         self.event_cache = {}
         self.bot.loop.create_task(self.initialize())
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            self.sanitize = {
+                "allowed_mentions": discord.AllowedMentions(everyone=True, roles=True)
+            }
+        else:
+            self.sanitize = {}
 
     def format_help_for_context(self, ctx: commands.Context):
         """
-            Thanks Sinbad!
+        Thanks Sinbad!
         """
         pre_processed = super().format_help_for_context(ctx)
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
+
+    async def red_delete_data_for_user(
+        self,
+        *,
+        requester: Literal["discord_deleted_user", "owner", "user", "user_strict"],
+        user_id: int,
+    ):
+        """
+        Method for finding users data inside the cog and deleting it.
+        """
+        all_guilds = await self.config.all_guilds()
+        for guild_id, data in all_guilds.items():
+            if str(user_id) in data["events"]:
+                del data["events"][str(user_id)]
+                await self.config.guild_from_id(guild_id).events.set(data["events"])
+        all_members = await self.config.all_members()
+        for guild_id, members in all_members.items():
+            if user_id in members:
+                await self.config.member_from_ids(guild_id, user_id).clear()
 
     async def initialize(self) -> None:
         if version_info >= VersionInfo.from_str("3.2.0"):
@@ -79,7 +104,7 @@ class EventPoster(commands.Cog):
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         """
-            Checks for reactions to the event
+        Checks for reactions to the event
         """
         if str(payload.emoji) not in EVENT_EMOJIS:
             # log.debug("Not a valid yes or no emoji")
@@ -93,6 +118,9 @@ class EventPoster(commands.Cog):
         user = guild.get_member(payload.user_id)
         if user.bot:
             return
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
         event = self.event_cache[payload.guild_id][payload.message_id]
         if str(payload.emoji) == "\N{WHITE HEAVY CHECK MARK}":
             await self.add_user_to_event(user, event)
@@ -111,7 +139,7 @@ class EventPoster(commands.Cog):
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
         """
-            Checks for reactions to the event
+        Checks for reactions to the event
         """
         if str(payload.emoji) not in EVENT_EMOJIS:
             # log.debug("Not a valid yes or no emoji")
@@ -210,13 +238,13 @@ class EventPoster(commands.Cog):
         description: str,
     ) -> None:
         """
-            Create an event
+        Create an event
 
-            `[members...]` Add members already in the event you want to host.
-            `[max_slots=None]` Specify maximum number of Slots the event can have, default is no limit.
-            `<description>` provide a description for the event you're hosting.
-            With custom keyword links setup this will add an image to the events thumbnail
-            after being approved by an admin.
+        `[members...]` Add members already in the event you want to host.
+        `[max_slots=None]` Specify maximum number of Slots the event can have, default is no limit.
+        `<description>` provide a description for the event you're hosting.
+        With custom keyword links setup this will add an image to the events thumbnail
+        after being approved by an admin.
         """
         approval_channel = ctx.guild.get_channel(
             await self.config.guild(ctx.guild).approval_channel()
@@ -261,7 +289,7 @@ class EventPoster(commands.Cog):
             event.approver = user
             event.channel = announcement_channel
             em.set_footer(text=f"Approved by {user}", icon_url=user.avatar_url)
-            posted_message = await announcement_channel.send(ping, embed=em)
+            posted_message = await announcement_channel.send(ping, embed=em, **self.sanitize)
             if publish:
                 try:
                     await posted_message.publish()
@@ -288,9 +316,9 @@ class EventPoster(commands.Cog):
     @commands.bot_has_permissions(embed_links=True)
     async def clear_event(self, ctx: commands.Context, clear: bool = False) -> None:
         """
-            Delete a stored event so you can create more
+        Delete a stored event so you can create more
 
-            `[clear]` yes/no to clear your current running event.
+        `[clear]` yes/no to clear your current running event.
         """
         if str(ctx.author.id) not in await self.config.guild(ctx.guild).events():
             return await ctx.send("You don't have any events running.")
@@ -348,7 +376,11 @@ class EventPoster(commands.Cog):
     @commands.command(name="join")
     @commands.guild_only()
     async def join_event(
-        self, ctx: commands.Context, hoster: discord.Member, *, player_class: Optional[str] = None,
+        self,
+        ctx: commands.Context,
+        hoster: discord.Member,
+        *,
+        player_class: Optional[str] = None,
     ) -> None:
         """Join an event being hosted"""
         if str(hoster.id) not in await self.config.guild(ctx.guild).events():
@@ -393,10 +425,10 @@ class EventPoster(commands.Cog):
         self, ctx: commands.Context, member: discord.Member, hoster: discord.Member = None
     ) -> None:
         """
-            Remove a user from an event you're hosting
+        Remove a user from an event you're hosting
 
-            `<member>` The member to remove from your event
-            `<hoster>` mod/admin only to specify whos event to remove a user from.
+        `<member>` The member to remove from your event
+        `<hoster>` mod/admin only to specify whos event to remove a user from.
         """
         if hoster and not await self.is_mod_or_admin(ctx.author):
             return await ctx.send("You cannot remove a member from someone elses event")
@@ -485,13 +517,16 @@ class EventPoster(commands.Cog):
     @commands.guild_only()
     async def set_guild_publish(self, ctx: commands.Context, publish: bool):
         """
-            Toggle publishing events in news channels.
+        Toggle publishing events in news channels.
         """
         announcement_channel = await self.config.guild(ctx.guild).announcement_channel()
         chan = ctx.guild.get_channel(announcement_channel)
         if chan and chan.is_news():
             await self.config.guild(ctx.guild).publish.set(publish)
-            await ctx.send("I will now publish events posted in this server.")
+            if publish:
+                await ctx.send("I will now publish events posted in this server.")
+            else:
+                await ctx.send("I will not publish events posted in this server.")
         elif chan and not chan.is_news():
             await ctx.send("The announcement channel set is not a news channel I can publish in.")
         else:
@@ -505,10 +540,10 @@ class EventPoster(commands.Cog):
         self, ctx: commands.Context, *, player_class: str = ""
     ) -> None:
         """
-            Set's the users default player class. If nothing is provided this will be rest.
+        Set's the users default player class. If nothing is provided this will be rest.
 
-            If the user has set this and does not provide a `player_class` in the join command,
-            this setting will be used.
+        If the user has set this and does not provide a `player_class` in the join command,
+        this setting will be used.
         """
         await self.config.member(ctx.author).player_class.set(player_class)
         if player_class:
@@ -527,9 +562,9 @@ class EventPoster(commands.Cog):
         self, ctx: commands.Context, default_max: Optional[int] = None
     ) -> None:
         """
-            Set's the servers default maximum slots
+        Set's the servers default maximum slots
 
-            This can be useful for defining the maximum number of slots allowed for an event.
+        This can be useful for defining the maximum number of slots allowed for an event.
         """
         await self.config.guild(ctx.guild).default_max.set(default_max)
         await ctx.send(
@@ -545,9 +580,9 @@ class EventPoster(commands.Cog):
         self, ctx: commands.Context, channel: discord.TextChannel = None
     ) -> None:
         """
-            Set the Announcement channel for events
+        Set the Announcement channel for events
 
-            Providing no channel will clear the channel.
+        Providing no channel will clear the channel.
         """
         if channel and not channel.permissions_for(ctx.me).embed_links:
             return await ctx.send("I require `Embed Links` permission to use that channel.")
@@ -569,9 +604,9 @@ class EventPoster(commands.Cog):
         self, ctx: commands.Context, channel: discord.TextChannel = None
     ) -> None:
         """
-            Set the admin approval channel
+        Set the admin approval channel
 
-            Providing no channel will clear the channel.
+        Providing no channel will clear the channel.
         """
         if channel and not channel.permissions_for(ctx.me).embed_links:
             return await ctx.send("I require `Embed Links` permission to use that channel.")
@@ -594,11 +629,11 @@ class EventPoster(commands.Cog):
     @commands.guild_only()
     async def set_custom_link(self, ctx: commands.Context, keyword: str, link: ValidImage) -> None:
         """
-            Set the custom thumbnail for events
+        Set the custom thumbnail for events
 
-            `<keyword>` is the word that will be searched for in event titles.
-            `<link>` needs to be an image link to be used for the thumbnail when the keyword
-            is found in the event title.
+        `<keyword>` is the word that will be searched for in event titles.
+        `<link>` needs to be an image link to be used for the thumbnail when the keyword
+        is found in the event title.
         """
         async with self.config.guild(ctx.guild).custom_links() as custom_links:
             if keyword.lower() not in custom_links:
@@ -610,10 +645,10 @@ class EventPoster(commands.Cog):
     @commands.guild_only()
     async def set_ping(self, ctx: commands.Context, *roles: Union[discord.Role, str]) -> None:
         """
-            Set the ping to use when an event is announced
+        Set the ping to use when an event is announced
 
-            `[roles...]` is a space separated list of roles to be pinged when an announcement
-            is made. Use `here` or `everyone` if you want to ping that specific group of people.
+        `[roles...]` is a space separated list of roles to be pinged when an announcement
+        is made. Use `here` or `everyone` if you want to ping that specific group of people.
         """
         msg = ", ".join(r.mention for r in roles if type(r) == discord.Role)
         msg += ", ".join(f"@{r}" for r in roles if r in ["here", "everyone"])

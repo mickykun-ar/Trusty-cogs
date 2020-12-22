@@ -1,17 +1,16 @@
-import discord
-import aiohttp
-from redbot.core import commands
-from redbot.core import Config
-from redbot.core import checks
-from random import choice as randchoice
 import asyncio
+from random import choice as randchoice
+
+import aiohttp
+import discord
+from redbot.core import Config, checks, commands
 
 numbs = {"next": "➡", "back": "⬅", "exit": "❌"}
 
 
 class Halo(commands.Cog):
     """
-        Display Halo 5 and Halo Wars 2 stats and information
+    Display Halo 5 and Halo Wars 2 stats and information
     """
 
     def __init__(self, bot):
@@ -20,6 +19,12 @@ class Halo(commands.Cog):
         default_global = {"api_token": {"token": "", "language": "en"}}
         self.config = Config.get_conf(self, 35689771456)
         self.config.register_global(**default_global)
+
+    async def red_delete_data_for_user(self, **kwargs):
+        """
+        Nothing to delete
+        """
+        return
 
     async def request_url(self, url, params=None):
         header_data = await self.config.api_token()
@@ -49,7 +54,7 @@ class Halo(commands.Cog):
         self, ctx, post_list: list, message: discord.Message = None, page=0, timeout: int = 30
     ):
         """menu control logic for this taken from
-           https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
+        https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
         s = post_list[page]
         created_at = ctx.message.created_at
         desc = "Created at: {}".format(created_at)
@@ -117,7 +122,7 @@ class Halo(commands.Cog):
         self, ctx, post_list: list, message: discord.Message = None, page=0, timeout: int = 30
     ):
         """menu control logic for this taken from
-           https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
+        https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py"""
         s = post_list[page]
         created_at = ctx.message.created_at
         desc = "Created at: {}".format(created_at)

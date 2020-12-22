@@ -1,12 +1,11 @@
-import discord
 import re
+from typing import List, Optional, Tuple, cast
 
-from typing import List, Tuple, Optional, cast
-
+import discord
 from discord.ext.commands.converter import Converter
 from discord.ext.commands.errors import BadArgument
 
-IMAGE_LINKS = re.compile(r"(http[s]?:\/\/[^\"\']*\.(?:png|jpg|jpeg|gif|png))")
+IMAGE_LINKS = re.compile(r"(http[s]?:\/\/[^\"\']*\.(?:png|jpg|jpeg|gif|png))", flags=re.I)
 
 
 class Event:
@@ -31,7 +30,7 @@ class Event:
 
     def __str__(self):
         """used for debugging event information"""
-        return (f"{self.hoster}\n{self.members}\n{self.event}\n{self.max_slots}\n{self.maybe}")
+        return f"{self.hoster}\n{self.members}\n{self.event}\n{self.max_slots}\n{self.maybe}"
 
     @classmethod
     async def from_json(cls, data: dict, guild: discord.Guild):
@@ -40,9 +39,7 @@ class Event:
         if not channel:
             return None
         try:
-            message = await channel.fetch_message(data["message"])
-        except AttributeError:
-            message = await channel.get_message(data["message"])  # type: ignore
+            message = await channel.fetch_message(data["message"])  # type: ignore
         except Exception:
             # Return None if we can't find the original events
             return None
@@ -79,7 +76,7 @@ class Event:
             approver=guild.get_member(data["approver"]),
             message=message,
             channel=channel,
-            maybe=maybe
+            maybe=maybe,
         )
 
     def to_json(self):
@@ -91,7 +88,7 @@ class Event:
             "approver": self.approver.id if self.approver else None,
             "message": self.message.id if self.message else None,
             "channel": self.channel.id if self.channel else None,
-            "maybe": [m.id for m in self.maybe]
+            "maybe": [m.id for m in self.maybe],
         }
 
 
