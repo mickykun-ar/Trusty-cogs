@@ -14,7 +14,7 @@ from tabulate import tabulate
 log = logging.getLogger("red.trusty-cogs.spotify")
 
 SPOTIFY_RE = re.compile(
-    r"(https?:\/\/open\.spotify\.com\/|spotify:)(track|playlist|album|artist|episode|show)\/?:?([^?\(\)\s]+)"
+    r"(https?:\/\/open\.spotify\.com\/|spotify:?)(track|playlist|album|artist|episode|show)\/?:?([^?\(\)\s]+)"
 )
 
 SPOTIFY_LOGO = "https://imgur.com/Ig4VuuJ.png"
@@ -160,6 +160,8 @@ async def make_details(track: tekore.model.FullTrack, details: tekore.model.Audi
             detail = f"[ {detail} dB ]"
         if attr == "tempo":
             detail = f"[ {detail} BPM ]"
+        if attr == "time_signature":
+            detail = f"[ {detail}/4 ]"
         if isinstance(detail, int):
             detail = f"[ {detail} ]"
         if isinstance(detail, float):
@@ -253,6 +255,8 @@ class RecommendationsConverter(Converter):
 
     async def convert(self, ctx: commands.Context, argument: str) -> dict:
         query = {}
+        argument = argument.replace("🧑‍🎨", ":artist:")
+        # because discord will replace this in URI's automatically 🙄
         rec_str = r"|".join(i for i in VALID_RECOMMENDATIONS.keys())
         find_rec = re.compile(fr"({rec_str})\W(.+)", flags=re.I)
         if not ctx.cog.GENRES:
@@ -278,7 +282,7 @@ class RecommendationsConverter(Converter):
                 if match.group(2) == "track":
                     tracks.append(match.group(3))
                 if match.group(2) == "artist":
-                    tracks.append(match.group(3))
+                    artists.append(match.group(3))
         query = {
             "artist_ids": artists if artists else None,
             "genres": genres if genres else None,

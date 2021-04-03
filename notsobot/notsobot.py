@@ -93,7 +93,7 @@ class NotSoBot(commands.Cog):
     """
 
     __author__ = ["NotSoSuper", "TrustyJAID"]
-    __version__ = "2.4.4"
+    __version__ = "2.4.6"
 
     def __init__(self, bot):
         self.bot = bot
@@ -303,7 +303,9 @@ class NotSoBot(commands.Cog):
             try:
                 final, content_msg, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, TypeError):
-                return await ctx.send("That image is either too large or given image format is unsupported.")
+                return await ctx.send(
+                    "That image is either too large or given image format is unsupported."
+                )
             if type(final) == str:
                 await ctx.send(final)
                 return
@@ -692,7 +694,9 @@ class NotSoBot(commands.Cog):
             try:
                 img = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                return await ctx.send("That image is either too large or image filetype is unsupported.")
+                return await ctx.send(
+                    "That image is either too large or image filetype is unsupported."
+                )
             final = BytesIO()
             img.save(final, "png")
             file_size = final.tell()
@@ -820,49 +824,61 @@ class NotSoBot(commands.Cog):
     @commands.cooldown(1, 5)
     @commands.bot_has_permissions(attach_files=True)  # ImageFinder consumes rest this is so goat'd
     async def merge(self, ctx, vertical: Optional[bool] = True, *, urls: Optional[ImageFinder]):
-        """Merge/Combine Two Photos"""
+        """
+        Merge/Combine Two Photos
+
+        `[vertical=True]` `true` or `false` to merge vertically.
+        `[urls]` The Image URL's you want to merge together. If not supplied
+        images are searched from message history.
+        """
         if urls is None:
             urls = await ImageFinder().search_for_images(ctx)
         if not urls:
             return await ctx.send("No images found.")
         async with ctx.typing():
             if len(urls) == 1:
-                await ctx.send("You gonna merge one image?")
+                await ctx.send("You need to supply more than 1 image.")
                 return
             xx = await ctx.message.channel.send("ok, processing")
             count = 0
             list_im = []
             for url in urls:
+                log.debug(url)
                 count += 1
                 b, mime = await self.bytes_download(str(url))
                 if sys.getsizeof(b) == 215:
                     await ctx.send(":no_entry: Image `{0}` is invalid!".format(str(count)))
                     continue
+                if not b:
+                    continue
                 list_im.append(b)
 
-                def make_merge(b):
-                    imgs = [Image.open(i).convert("RGBA") for i in list_im]
-                    if vertical:
-                        # Vertical
-                        max_shape = sorted([(np.sum(i.size), i.size) for i in imgs])[1][1]
-                        imgs_comb = np.vstack([np.asarray(i.resize(max_shape)) for i in imgs])
-                    else:
-                        # Horizontal
-                        min_shape = sorted([(np.sum(i.size), i.size) for i in imgs])[0][1]
-                        imgs_comb = np.hstack([np.asarray(i.resize(min_shape)) for i in imgs])
-                    imgs_comb = Image.fromarray(imgs_comb)
-                    final = BytesIO()
-                    imgs_comb.save(final, "png")
-                    file_size = final.tell()
-                    final.seek(0)
-                    return discord.File(final, filename="merge.png"), file_size
-
+            def make_merge(list_im):
+                imgs = [Image.open(i).convert("RGBA") for i in list_im]
+                if vertical:
+                    # Vertical
+                    max_shape = sorted([(np.sum(i.size), i.size) for i in imgs])[1][1]
+                    imgs_comb = np.vstack([np.asarray(i.resize(max_shape)) for i in imgs])
+                else:
+                    # Horizontal
+                    min_shape = sorted([(np.sum(i.size), i.size) for i in imgs])[0][1]
+                    imgs_comb = np.hstack([np.asarray(i.resize(min_shape)) for i in imgs])
+                imgs_comb = Image.fromarray(imgs_comb)
+                final = BytesIO()
+                imgs_comb.save(final, "png")
+                file_size = final.tell()
+                final.seek(0)
+                return discord.File(final, filename="merge.png"), file_size
+            if len(list_im) < 2:
+                return await ctx.send("You need to supply more than 1 image.")
             await xx.delete()
-            task = ctx.bot.loop.run_in_executor(None, make_merge, b)
+            task = ctx.bot.loop.run_in_executor(None, make_merge, list_im)
             try:
                 file, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                return await ctx.send("That image is either too large or image filetype is unsupported.")
+                return await ctx.send(
+                    "That image is either too large or image filetype is unsupported."
+                )
             await self.safe_send(ctx, None, file, file_size)
 
     @commands.command(aliases=["cancerify", "em"])
@@ -954,7 +970,9 @@ class NotSoBot(commands.Cog):
             try:
                 file, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                return await ctx.send("That image is either too large or image filetype is unsupported.")
+                return await ctx.send(
+                    "That image is either too large or image filetype is unsupported."
+                )
             await self.safe_send(ctx, None, file, file_size)
 
     def do_vw(self, b, txt):
@@ -1210,7 +1228,9 @@ class NotSoBot(commands.Cog):
                 try:
                     final, file_size = await asyncio.wait_for(task, timeout=60)
                 except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                    return await ctx.send("The image is either too large or image filetype is unsupported.")
+                    return await ctx.send(
+                        "The image is either too large or image filetype is unsupported."
+                    )
                 file = discord.File(final, filename="glitch.jpeg")
                 msg = f"Iterations: `{iterations}` | Amount: `{amount}` | Seed: `{seed}`"
                 await self.safe_send(ctx, msg, file, file_size)
@@ -1241,7 +1261,10 @@ class NotSoBot(commands.Cog):
                 if len(img_urls) > 1:
                     await ctx.send(":warning: **Command download function failed...**")
                     return
-            task = ctx.bot.loop.run_in_executor(None, self.make_pixel, b, pixels, scale_msg)
+            if mime in self.gif_mimes:
+                task = ctx.bot.loop.run_in_executor(None, self.make_pixel_gif, b, pixels, scale_msg)
+            else:
+                task = ctx.bot.loop.run_in_executor(None, self.make_pixel, b, pixels, scale_msg)
             try:
                 file, file_size = await asyncio.wait_for(task, timeout=60)
             except asyncio.TimeoutError:
@@ -1264,6 +1287,32 @@ class NotSoBot(commands.Cog):
         file_size = final.tell()
         final.seek(0)
         return discord.File(final, filename="pixelated.png"), file_size
+
+    def make_pixel_gif(self, b, pixels, scale_msg):
+        try:
+            image = Image.open(b)
+            gif_list = [frame.copy() for frame in ImageSequence.Iterator(image)]
+        except IOError:
+            return ":warning: Cannot load gif."
+        bg = (0, 0, 0)
+        img_list = []
+        for frame in gif_list:
+            img = Image.new("RGBA", frame.size)
+            img.paste(frame, (0, 0))
+            img = img.resize((int(img.size[0] / pixels), int(img.size[1] / pixels)), Image.NEAREST)
+            img = img.resize((int(img.size[0] * pixels), int(img.size[1] * pixels)), Image.NEAREST)
+            load = img.load()
+            for i in range(0, img.size[0], pixels):
+                for j in range(0, img.size[1], pixels):
+                    for r in range(pixels):
+                        load[i + r, j] = bg
+                        load[i, j + r] = bg
+            img_list.append(img)
+        final = BytesIO()
+        img.save(final, format="GIF", save_all=True, append_images=img_list, duration=0, loop=0)
+        file_size = final.tell()
+        final.seek(0)
+        return discord.File(final, filename="pixelated.gif"), file_size
 
     async def do_retro(self, text, bcg):
         if "|" not in text:
@@ -1389,7 +1438,9 @@ class NotSoBot(commands.Cog):
             try:
                 final, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, wand.exceptions.MissingDelegateError):
-                return await ctx.send("The image is either too large or you're missing delegates for this image format.")
+                return await ctx.send(
+                    "The image is either too large or you're missing delegates for this image format."
+                )
             file = discord.File(final, filename="waaw.png")
             await self.safe_send(ctx, None, file, file_size)
 
@@ -1434,7 +1485,9 @@ class NotSoBot(commands.Cog):
             try:
                 final, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, wand.exceptions.MissingDelegateError):
-                return await ctx.send("The image is either too large or you're missing delegates for this image format.")
+                return await ctx.send(
+                    "The image is either too large or you're missing delegates for this image format."
+                )
             file = discord.File(final, filename="haah.png")
             await self.safe_send(ctx, None, file, file_size)
 
@@ -1480,7 +1533,9 @@ class NotSoBot(commands.Cog):
             try:
                 final, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, wand.exceptions.MissingDelegateError):
-                return await ctx.send("The image is either too large or you're missing delegates for this image format.")
+                return await ctx.send(
+                    "The image is either too large or you're missing delegates for this image format."
+                )
             file = discord.File(final, filename="woow.png")
             await self.safe_send(ctx, None, file, file_size)
 
@@ -1526,7 +1581,9 @@ class NotSoBot(commands.Cog):
             try:
                 final, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, wand.exceptions.MissingDelegateError):
-                return await ctx.send("The image is either too large or you're missing delegates for this image format.")
+                return await ctx.send(
+                    "The image is either too large or you're missing delegates for this image format."
+                )
             file = discord.File(final, filename="hooh.png")
             await self.safe_send(ctx, None, file, file_size)
 
@@ -1556,7 +1613,9 @@ class NotSoBot(commands.Cog):
             try:
                 file, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                return await ctx.send("The image is either too large or image filetype is unsupported.")
+                return await ctx.send(
+                    "The image is either too large or image filetype is unsupported."
+                )
             await self.safe_send(ctx, None, file, file_size)
 
     @commands.command()
@@ -1616,7 +1675,9 @@ class NotSoBot(commands.Cog):
             try:
                 file, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                return await ctx.send("That image is either too large or image filetype is unsupported.")
+                return await ctx.send(
+                    "That image is either too large or image filetype is unsupported."
+                )
             await self.safe_send(ctx, None, file, file_size)
 
     @commands.command()
@@ -1644,5 +1705,7 @@ class NotSoBot(commands.Cog):
             try:
                 file, file_size = await asyncio.wait_for(task, timeout=60)
             except (asyncio.TimeoutError, PIL.UnidentifiedImageError):
-                return await ctx.send("That image is either too large or image filetype is unsupported.")
+                return await ctx.send(
+                    "That image is either too large or image filetype is unsupported."
+                )
             await self.safe_send(ctx, f"Rotated: `{degrees}°`", file, file_size)

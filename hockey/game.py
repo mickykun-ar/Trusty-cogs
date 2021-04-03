@@ -7,20 +7,18 @@ import aiohttp
 import discord  # type: ignore[import]
 from redbot import VersionInfo, version_info
 from redbot.core import Config
-from redbot.core.utils import bounded_gather
+from redbot.core.bot import Red
+from redbot.core.utils import bounded_gather, AsyncIter
 from redbot.core.i18n import Translator
-from redbot.core.utils.chat_formatting import pagify
 
 from .constants import BASE_URL, CONTENT_URL, TEAMS
 from .goal import Goal
-from .helper import check_to_post, get_team, get_team_role, utc_to_local
+from .helper import check_to_post, get_team, get_team_role, utc_to_local, get_channel_obj
 from .standings import Standings
 
 _ = Translator("Hockey", __file__)
 
 log = logging.getLogger("red.trusty-cogs.Hockey")
-
-GAME_TYPES = {"PR": _("Pre Season"), "R": _("Regular Season"), "P": _("Post Season")}
 
 
 class Game:
@@ -104,6 +102,15 @@ class Game:
         self.game_type = kwargs.get("game_type")
         self.link = kwargs.get("link")
 
+    def __repr__(self):
+        return "<Hockey Game home={0.home_team} away={0.away_team} state={0.game_state}>".format(
+            self
+        )
+
+    def game_type_str(self):
+        game_types = {"PR": _("Pre Season"), "R": _("Regular Season"), "P": _("Post Season")}
+        return game_types.get(self.game_type, _("Unknown"))
+
     def to_json(self) -> dict:
         return {
             "game_state": self.game_state,
@@ -130,12 +137,17 @@ class Game:
             "first_star": self.first_star,
             "second_star": self.second_star,
             "third_star": self.third_star,
-            "game_type": {v: k for k, v in GAME_TYPES.items()}.get(self.game_type, ""),
+            "game_type": self.game_type,
             "link": self.link,
         }
 
     @staticmethod
-    async def get_games(team=None, start_date: datetime = None, end_date: datetime = None):
+    async def get_games(
+        team=None,
+        start_date: datetime = None,
+        end_date: datetime = None,
+        session: Optional[aiohttp.ClientSession] = None,
+    ):
         """
         Get a specified days games, defaults to the current day
         requires a datetime object
@@ -145,12 +157,16 @@ class Game:
 
         returns a list of game objects
         """
-        games_list = await Game.get_games_list(team, start_date, end_date)
+        games_list = await Game.get_games_list(team, start_date, end_date, session)
         return_games_list = []
         if games_list != []:
             for games in games_list:
                 try:
-                    async with aiohttp.ClientSession() as session:
+                    if session is None:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(BASE_URL + games["link"]) as resp:
+                                data = await resp.json()
+                    else:
                         async with session.get(BASE_URL + games["link"]) as resp:
                             data = await resp.json()
                     # log.debug(BASE_URL + games["link"])
@@ -161,7 +177,12 @@ class Game:
         return return_games_list
 
     @staticmethod
-    async def get_games_list(team=None, start_date: datetime = None, end_date: datetime = None):
+    async def get_games_list(
+        team=None,
+        start_date: datetime = None,
+        end_date: datetime = None,
+        session: Optional[aiohttp.ClientSession] = None,
+    ):
         """
         Get a specified days games, defaults to the current day
         requires a datetime object
@@ -189,29 +210,15 @@ class Game:
         if team not in ["all", None]:
             # if a team is provided get just that TEAMS data
             url += "&teamId={}".format(TEAMS[team]["id"])
-        async with aiohttp.ClientSession() as session:
+        if session is None:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    data = await resp.json()
+        else:
             async with session.get(url) as resp:
                 data = await resp.json()
         game_list = [game for date in data["dates"] for game in date["games"]]
         return game_list
-
-    @staticmethod
-    async def get_game_embed(post_list, page):
-        """
-        Makes the game object from provided URL
-        """
-        game = post_list[page]
-
-        if type(game) is dict:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(BASE_URL + game["link"]) as resp:
-                    game_json = await resp.json()
-            data = await Game.from_json(game_json)
-            log.debug(BASE_URL + game["link"])
-        else:
-            data = game
-
-        return await data.make_game_embed()
 
     async def make_game_embed(
         self,
@@ -241,7 +248,7 @@ class Game:
         em.set_author(name=title, url=team_url, icon_url=self.home_logo)
         em.set_thumbnail(url=self.home_logo)
         em.set_footer(
-            text=_("{game_type} Game start ").format(game_type=self.game_type),
+            text=_("{game_type} Game start ").format(game_type=self.game_type_str()),
             icon_url=self.away_logo,
         )
         if self.game_state == "Preview":
@@ -541,14 +548,13 @@ class Game:
         tasks = []
         post_state = ["all", self.home_team, self.away_team]
         config = bot.get_cog("Hockey").config
-        for channels in await bot.get_cog("Hockey").config.all_channels():
-            channel = bot.get_channel(id=channels)
-            if channel is None:
-                await bot.get_cog("Hockey").config._clear_scope(Config.CHANNEL, str(channels))
-                log.info("{} channel was removed because it no longer exists".format(channels))
+        all_channels = await bot.get_cog("Hockey").config.all_channels()
+        async for channel_id, data in AsyncIter(all_channels.items(), steps=100):
+            channel = await get_channel_obj(bot, channel_id, data)
+            if not channel:
                 continue
 
-            should_post = await check_to_post(bot, channel, post_state, self.game_state)
+            should_post = await check_to_post(bot, channel, data, post_state, self.game_state)
             should_post &= "Periodrecap" in await config.channel(channel).game_states()
             publish = "Periodrecap" in await config.channel(channel).publish_states()
             if should_post:
@@ -590,13 +596,13 @@ class Game:
         state_embed = await self.game_state_embed()
         state_text = await self.game_state_text()
         tasks = []
-        for channels in await bot.get_cog("Hockey").config.all_channels():
-            channel = bot.get_channel(id=channels)
-            if channel is None:
-                await bot.get_cog("Hockey").config._clear_scope(Config.CHANNEL, str(channels))
-                log.info("{} channel was removed because it no longer exists".format(channels))
+        all_channels = await bot.get_cog("Hockey").config.all_channels()
+        async for channel_id, data in AsyncIter(all_channels.items(), steps=100):
+            channel = await get_channel_obj(bot, channel_id, data)
+            if not channel:
                 continue
-            should_post = await check_to_post(bot, channel, post_state, self.game_state)
+
+            should_post = await check_to_post(bot, channel, data, post_state, self.game_state)
             if should_post:
                 tasks.append(self.actually_post_state(bot, channel, state_embed, state_text))
         previews = await bounded_gather(*tasks)
@@ -616,38 +622,53 @@ class Game:
             )
             return
         config = bot.get_cog("Hockey").config
-        game_day_channels = await config.guild(guild).gdc()
+        guild_settings = await config.guild(guild).all()
+        channel_settings = await config.channel(channel).all()
+        del guild_settings["pickems"]  # No need to keep this in memory twice
+        game_day_channels = guild_settings["gdc"]
         can_embed = channel.permissions_for(guild.me).embed_links
-        publish_states = await config.channel(channel).publish_states()
+        publish_states = []  # await config.channel(channel).publish_states()
         # can_manage_webhooks = False  # channel.permissions_for(guild.me).manage_webhooks
 
         if self.game_state == "Live":
 
-            guild_notifications = await config.guild(guild).game_state_notifications()
-            channel_notifications = await config.channel(channel).game_state_notifications()
+            guild_notifications = guild_settings["game_state_notifications"]
+            channel_notifications = channel_settings["game_state_notifications"]
             state_notifications = guild_notifications or channel_notifications
-            guild_start = await config.guild(guild).start_notifications()
-            channel_start = await config.channel(channel).start_notifications()
-            start_notifications = guild_start or channel_start
+            # TODO: Something with these I can't remember what now
+            # guild_start = guild_settings["start_notifications"]
+            # channel_start = channel_settings["start_notifications"]
+            # start_notifications = guild_start or channel_start
             # heh inclusive or
             allowed_mentions = {}
             home_role, away_role = await get_team_role(guild, self.home_team, self.away_team)
-            if state_notifications:
-                if version_info >= VersionInfo.from_str("3.4.0"):
+            if version_info >= VersionInfo.from_str("3.4.0"):
+                if state_notifications:
                     allowed_mentions = {"allowed_mentions": discord.AllowedMentions(roles=True)}
-
+                else:
+                    allowed_mentions = {"allowed_mentions": discord.AllowedMentions(roles=False)}
+            if self.game_state == "R" and "OT" in self.period_ord:
+                if not guild_settings["ot_notifications"]:
+                    if version_info >= VersionInfo.from_str("3.4.0"):
+                        allowed_mentions = {
+                            "allowed_mentions": discord.AllowedMentions(roles=False)
+                        }
+                    else:
+                        allowed_mentions = {}
+            if "SO" in self.period_ord:
+                if not guild_settings["so_notifications"]:
+                    if version_info >= VersionInfo.from_str("3.4.0"):
+                        allowed_mentions = {
+                            "allowed_mentions": discord.AllowedMentions(roles=False)
+                        }
+                    else:
+                        allowed_mentions = {}
             if game_day_channels is not None:
                 # We don't want to ping people in the game day channels twice
                 if channel.id in game_day_channels:
                     home_role, away_role = self.home_team, self.away_team
-            msg = (
-                "**"
-                + str(self.period_ord)
-                + _(" Period starting ")
-                + away_role
-                + _(" at ")
-                + home_role
-                + "**"
+            msg = _("**{period} Period starting {away_role} at {home_role}**").format(
+                period=self.period_ord, away_role=away_role, home_role=home_role
             )
             try:
                 if not can_embed:
@@ -712,8 +733,12 @@ class Game:
         """
         Checks to see if a goal needs to be posted
         """
-        home_team_data = await get_team(bot, self.home_team)
-        away_team_data = await get_team(bot, self.away_team)
+        team_data = {
+            self.home_team: await get_team(bot, self.home_team),
+            self.away_team: await get_team(bot, self.away_team),
+        }
+        # home_team_data = await get_team(bot, self.home_team)
+        # away_team_data = await get_team(bot, self.away_team)
         # all_data = await get_team("all")
         team_list = await bot.get_cog("Hockey").config.teams()
         # post_state = ["all", self.home_team, self.away_team]
@@ -721,31 +746,34 @@ class Game:
         # home_goal_ids = [goal.goal_id for goal in self.home_goals]
         # away_goal_ids = [goal.goal_id for goal in self.away_goals]
 
-        home_goal_list = list(home_team_data["goal_id"])
-        away_goal_list = list(away_team_data["goal_id"])
+        home_goal_list = list(team_data[self.home_team]["goal_id"])
+        away_goal_list = list(team_data[self.away_team]["goal_id"])
 
         for goal in self.goals:
             # goal_id = str(goal["result"]["eventCode"])
             # team = goal["team"]["name"]
-            team_data = await get_team(bot, goal.team_name)
-            if goal.goal_id not in team_data["goal_id"]:
+            # team_data = await get_team(bot, goal.team_name)
+            if goal.goal_id not in team_data[goal.team_name]["goal_id"]:
                 # attempts to post the goal if there is a new goal
                 bot.dispatch("hockey_goal", self, goal)
                 msg_list = await goal.post_team_goal(bot, self)
-                team_list.remove(team_data)
-                team_data["goal_id"][goal.goal_id] = {"goal": goal.to_json(), "messages": msg_list}
-                team_list.append(team_data)
+                team_list.remove(team_data[goal.team_name])
+                team_data[goal.team_name]["goal_id"][goal.goal_id] = {
+                    "goal": goal.to_json(),
+                    "messages": msg_list,
+                }
+                team_list.append(team_data[goal.team_name])
                 await bot.get_cog("Hockey").config.teams.set(team_list)
                 continue
-            if goal.goal_id in team_data["goal_id"]:
+            if goal.goal_id in team_data[goal.team_name]["goal_id"]:
                 # attempts to edit the goal if the scorers have changed
-                old_goal = Goal(**team_data["goal_id"][goal.goal_id]["goal"])
+                old_goal = Goal(**team_data[goal.team_name]["goal_id"][goal.goal_id]["goal"])
                 if goal.description != old_goal.description or goal.link != old_goal.link:
                     bot.dispatch("hockey_goal_edit", self, goal)
-                    old_msgs = team_data["goal_id"][goal.goal_id]["messages"]
-                    team_list.remove(team_data)
-                    team_data["goal_id"][goal.goal_id]["goal"] = goal.to_json()
-                    team_list.append(team_data)
+                    old_msgs = team_data[goal.team_name]["goal_id"][goal.goal_id]["messages"]
+                    team_list.remove(team_data[goal.team_name])
+                    team_data[goal.team_name]["goal_id"][goal.goal_id]["goal"] = goal.to_json()
+                    team_list.append(team_data[goal.team_name])
                     await bot.get_cog("Hockey").config.teams.set(team_list)
                     await goal.edit_team_goal(bot, self, old_msgs)
         # attempts to delete the goal if it was called back
@@ -807,14 +835,13 @@ class Game:
             home=self.home_team,
         )
         tasks = []
-        for channels in await bot.get_cog("Hockey").config.all_channels():
-            channel = bot.get_channel(id=channels)
-            if channel is None:
-                await bot.get_cog("Hockey").config._clear_scope(Config.CHANNEL, str(channels))
-                log.info("{} channel was removed because it no longer exists".format(channels))
+        all_channels = await bot.get_cog("Hockey").config.all_channels()
+        async for channel_id, data in AsyncIter(all_channels.items(), steps=100):
+            channel = await get_channel_obj(bot, channel_id, data)
+            if not channel:
                 continue
 
-            should_post = await check_to_post(bot, channel, post_state, self.game_state)
+            should_post = await check_to_post(bot, channel, data, post_state, self.game_state)
             team_to_post = await bot.get_cog("Hockey").config.channel(channel).team()
             if should_post and "all" not in team_to_post:
                 tasks.append(self.post_game_start(channel, msg))
@@ -822,31 +849,29 @@ class Game:
 
     async def post_game_start(self, channel, msg):
         if not channel.permissions_for(channel.guild.me).send_messages:
-            log.debug(
-                _("No permission to send messages in {channel} ({id})").format(
-                    channel=channel, id=channel.id
-                )
-            )
+            log.debug(f"No permission to send messages in {channel} ({channel.id})")
             return
         try:
             await channel.send(msg)
         except Exception:
-            log.error(
-                _("Could not post goal in {channel} ({id})").format(
-                    channel=channel, id=channel.id
-                ),
-                exc_info=True,
-            )
+            log.exception(f"Could not post goal in {channel} ({channel.id})")
 
     @staticmethod
-    async def from_url(url: str):
+    async def from_url(url: str, session: Optional[aiohttp.ClientSession] = None):
         try:
-            async with aiohttp.ClientSession() as session:
+            if session is None:
+                # this should only happen in pickems objects
+                # since pickems don't have access to the full
+                # cogs session
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(BASE_URL + url) as resp:
+                        data = await resp.json()
+            else:
                 async with session.get(BASE_URL + url) as resp:
                     data = await resp.json()
             return await Game.from_json(data)
         except Exception:
-            log.error(_("Error grabbing game data: "), exc_info=True)
+            log.error("Error grabbing game data: ", exc_info=True)
             return
 
     @classmethod
@@ -887,13 +912,18 @@ class Game:
             period_time_left = "0"
             events = ["."]
         decisions = data["liveData"]["decisions"]
-        first_star = decisions["firstStar"]["fullName"] if "firstStar" in decisions else None
-        second_star = decisions["secondStar"]["fullName"] if "secondStar" in decisions else None
-        third_star = decisions["thirdStar"]["fullName"] if "thirdStar" in decisions else None
-        game_type = GAME_TYPES.get(data["gameData"]["game"]["type"], _("Unknown"))
+        first_star = decisions.get("firstStar", {}).get("fullName")
+        second_star = decisions.get("secondStar", {}).get("fullName")
+        third_star = decisions.get("thirdStar", {}).get("fullName")
+        game_type = data["gameData"]["game"]["type"]
+        game_state = (
+            data["gameData"]["status"]["abstractGameState"]
+            if data["gameData"]["status"]["detailedState"] != "Postponed"
+            else data["gameData"]["status"]["detailedState"]
+        )
         return cls(
             game_id=game_id,
-            game_state=data["gameData"]["status"]["abstractGameState"],
+            game_state=game_state,
             home_team=data["gameData"]["teams"]["home"]["name"],
             away_team=data["gameData"]["teams"]["away"]["name"],
             period=data["liveData"]["linescore"]["currentPeriod"],

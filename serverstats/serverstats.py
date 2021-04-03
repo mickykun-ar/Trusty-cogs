@@ -17,12 +17,19 @@ from redbot.core.utils.chat_formatting import (
     escape,
     humanize_number,
     humanize_timedelta,
+    humanize_list,
     pagify,
 )
 from redbot.core.utils.menus import start_adding_reactions
 from redbot.core.utils.predicates import MessagePredicate, ReactionPredicate
 
-from .converters import ChannelConverter, FuzzyMember, GuildConverter, MultiGuildConverter
+from .converters import (
+    ChannelConverter,
+    FuzzyMember,
+    GuildConverter,
+    MultiGuildConverter,
+    PermissionConverter,
+)
 from .menus import BaseMenu, AvatarPages, GuildPages, ListPages
 
 _ = Translator("ServerStats", __file__)
@@ -37,7 +44,7 @@ class ServerStats(commands.Cog):
     """
 
     __author__ = ["TrustyJAID", "Preda"]
-    __version__ = "1.5.3"
+    __version__ = "1.6.2"
 
     def __init__(self, bot):
         self.bot: Red = bot
@@ -82,7 +89,7 @@ class ServerStats(commands.Cog):
         """
         Display a users avatar in chat
         """
-        if not members:
+        if members is None:
             members = [ctx.author]
 
         await BaseMenu(
@@ -228,22 +235,24 @@ class ServerStats(commands.Cog):
         }
 
         features = {
-            "PARTNERED": _("Partnered"),
-            "VERIFIED": _("Verified"),
-            "DISCOVERABLE": _("Server Discovery"),
-            "FEATURABLE": _("Featurable"),
-            "COMMUNITY": _("Community"),
-            "PUBLIC_DISABLED": _("Public disabled"),
-            "INVITE_SPLASH": _("Splash Invite"),
-            "VIP_REGIONS": _("VIP Voice Servers"),
-            "VANITY_URL": _("Vanity URL"),
-            "MORE_EMOJI": _("More Emojis"),
-            "COMMERCE": _("Commerce"),
-            "LURKABLE": _("Lurkable"),
-            "NEWS": _("News Channels"),
             "ANIMATED_ICON": _("Animated Icon"),
             "BANNER": _("Banner Image"),
+            "COMMERCE": _("Commerce"),
+            "COMMUNITY": _("Community"),
+            "DISCOVERABLE": _("Server Discovery"),
+            "FEATURABLE": _("Featurable"),
+            "INVITE_SPLASH": _("Splash Invite"),
             "MEMBER_LIST_DISABLED": _("Member list disabled"),
+            "MEMBER_VERIFICATION_GATE_ENABLED": _("Membership Screening enabled"),
+            "MORE_EMOJI": _("More Emojis"),
+            "NEWS": _("News Channels"),
+            "PARTNERED": _("Partnered"),
+            "PREVIEW_ENABLED": _("Preview enabled"),
+            "PUBLIC_DISABLED": _("Public disabled"),
+            "VANITY_URL": _("Vanity URL"),
+            "VERIFIED": _("Verified"),
+            "VIP_REGIONS": _("VIP Voice Servers"),
+            "WELCOME_SCREEN_ENABLED": _("Welcome Screen enabled"),
         }
         guild_features_list = [
             f"✅ {name}" for feature, name in features.items() if feature in guild.features
@@ -286,13 +295,14 @@ class ServerStats(commands.Cog):
                 voice=bold(humanize_number(voice_channels)),
             ),
         )
+        owner = guild.owner if guild.owner else await self.bot.get_or_fetch_user(guild.owner_id)
         em.add_field(
             name=_("Utility:"),
             value=_(
                 "Owner: {owner_mention}\n{owner}\nRegion: {region}\nVerif. level: {verif}\nServer ID: {id}{shard}"
             ).format(
-                owner_mention=bold(str(guild.owner.mention)),
-                owner=bold(str(guild.owner)),
+                owner_mention=bold(str(owner.mention)),
+                owner=bold(str(owner)),
                 region=f"**{vc_regions.get(str(guild.region)) or str(guild.region)}**",
                 verif=bold(verif[str(guild.verification_level)]),
                 id=bold(str(guild.id)),
@@ -577,6 +587,108 @@ class ServerStats(commands.Cog):
             )
             return
         await ctx.tick()
+
+    @channeledit.command(name="permissions", aliases=["perms", "permission"])
+    @checks.mod_or_permissions(manage_permissions=True)
+    @checks.bot_has_permissions(manage_permissions=True)
+    async def edit_channel_perms(
+        self,
+        ctx: commands.Context,
+        permission: PermissionConverter,
+        channel: Optional[ChannelConverter],
+        true_or_false: Optional[bool],
+        *roles_or_users: Union[discord.Member, discord.Role, str],
+    ) -> None:
+        """
+        Edit channel read permissions for designated role
+
+        `[channel]` The channel you would like to edit. If no channel is provided
+        the channel this command is run in will be used.
+        `[true_or_false]` `True` or `False` to set the permission level. If this is not
+        provided `None` will be used instead which signifies the default state of the permission.
+        `[roles_or_users]` the roles or users you want to edit this setting for.
+
+        `<permission>` Must be one of the following:
+            add_reactions
+            attach_files
+            connect
+            create_instant_invite
+            deafen_members
+            embed_links
+            external_emojis
+            manage_messages
+            manage_permissions
+            manage_roles
+            manage_webhooks
+            move_members
+            mute_members
+            priority_speaker
+            read_message_history
+            read_messages
+            send_messages
+            send_tts_messages
+            speak
+            stream
+            use_external_emojis
+            use_slash_commands
+            use_voice_activation
+        """
+        if channel is None:
+            channel = ctx.channel
+        if (
+            not channel.permissions_for(ctx.author).manage_permissions
+            or not channel.permissions_for(ctx.author).manage_channels
+        ):
+            return await ctx.send(
+                _("You do not have the correct permissions to edit {channel}.").format(
+                    channel=channel.mention
+                )
+            )
+        if (
+            not channel.permissions_for(ctx.me).manage_permissions
+            or not channel.permissions_for(ctx.author).manage_channels
+        ):
+            return await ctx.send(
+                _("I do not have the correct permissions to edit {channel}.").format(
+                    channel=channel.mention
+                )
+            )
+        targets = list(roles_or_users)
+        for r in roles_or_users:
+            if isinstance(r, str):
+                if r == "everyone":
+                    targets.remove(r)
+                    targets.append(ctx.guild.default_role)
+                else:
+                    targets.remove(r)
+        if not targets:
+            return await ctx.send(
+                _("You need to provide a role or user you want to edit permissions for")
+            )
+        overs = channel.overwrites
+        for target in targets:
+            if target in overs:
+                overs[target].update(**{permission: true_or_false})
+
+            else:
+                perm = discord.PermissionOverwrite(**{permission: true_or_false})
+                overs[target] = perm
+        try:
+            await channel.edit(overwrites=overs)
+            await ctx.send(
+                _(
+                    "The following roles or users have had `{perm}` "
+                    "in {channel} set to `{perm_level}`:\n{roles_or_users}"
+                ).format(
+                    perm=permission,
+                    channel=channel.mention,
+                    perm_level=true_or_false,
+                    roles_or_users=humanize_list([i.mention for i in targets]),
+                )
+            )
+        except Exception:
+            log.exception(f"Error editing permissions in channel {channel.name}")
+            return await ctx.send(_("There was an issue editing permissions on that channel."))
 
     async def ask_for_invite(self, ctx: commands.Context) -> Optional[str]:
         """
@@ -877,65 +989,91 @@ class ServerStats(commands.Cog):
 
         `member` can be a user ID or mention
         """
-        if not user_id:
-            return await ctx.send(_("You need to supply a user ID for this to work properly."))
-        if isinstance(user_id, int):
-            try:
-                member = await self.bot.fetch_user(user_id)
-            except AttributeError:
-                member = await self.bot.get_user_info(user_id)
-            except discord.errors.NotFound:
-                await ctx.send(str(user_id) + _(" doesn't seem to be a discord user."))
-                return
-        else:
-            member = user_id
-        embed = discord.Embed()
-        since_created = (ctx.message.created_at - member.created_at).days
-        user_created = member.created_at.strftime("%d %b %Y %H:%M")
-        created_on = _("Joined Discord on {}\n({} days ago)").format(user_created, since_created)
-        embed.description = created_on
-        embed.set_thumbnail(url=member.avatar_url)
-        embed.colour = await ctx.embed_colour()
-        embed.set_author(name=f"{member} ({member.id})", icon_url=member.avatar_url)
-        if await self.bot.is_owner(ctx.author):
-            guild_list = [
-                m
-                async for m in AsyncIter(self.bot.get_all_members(), steps=500)
-                if m.id == member.id
-            ]
-        else:
-            guild_list = [
-                m
-                async for m in AsyncIter(self.bot.get_all_members(), steps=500)
-                if m.id == member.id and ctx.author in m.guild.members
-            ]
+        async with ctx.typing():
+            if not user_id:
+                return await ctx.send(_("You need to supply a user ID for this to work properly."))
+            if isinstance(user_id, int):
+                try:
+                    member = await self.bot.fetch_user(user_id)
+                except AttributeError:
+                    member = await self.bot.get_user_info(user_id)
+                except discord.errors.NotFound:
+                    await ctx.send(str(user_id) + _(" doesn't seem to be a discord user."))
+                    return
+            else:
+                member = user_id
 
-        if guild_list != []:
-            msg = f"**{member}** ({member.id}) " + _("is on:\n\n")
-            embed_list = ""
-            for m in guild_list:
-                # m = guild.get_member(member.id)
-                is_owner = ""
-                nick = ""
-                if m.id == m.guild.owner_id:
-                    is_owner = "\N{CROWN}"
-                if m.nick:
-                    nick = f"`{m.nick}` in"
-                msg += f"{is_owner}{nick} __{m.guild.name}__ ({m.guild.id})\n\n"
-                embed_list += f"{is_owner}{nick} __{m.guild.name}__ ({m.guild.id})\n\n"
-            if ctx.channel.permissions_for(ctx.me).embed_links:
-                for page in pagify(embed_list, ["\n"], shorten_by=1000):
-                    embed.add_field(name=_("Shared Servers"), value=page)
-                await ctx.send(embed=embed)
+            if await self.bot.is_owner(ctx.author):
+                guild_list = []
+                async for guild in AsyncIter(self.bot.guilds, steps=100):
+                    if m := guild.get_member(member.id):
+                        guild_list.append(m)
             else:
-                for page in pagify(msg, ["\n"], shorten_by=1000):
-                    await ctx.send(page)
-        else:
-            if ctx.channel.permissions_for(ctx.me).embed_links:
-                await ctx.send(embed=embed)
+                guild_list = []
+                async for guild in AsyncIter(self.bot.guilds, steps=100):
+                    if m := guild.get_member(member.id) and guild.get_member(ctx.author.id):
+                        guild_list.append(m)
+            embed_list = []
+            robot = "\N{ROBOT FACE}" if member.bot else ""
+            if guild_list != []:
+                msg = f"**{member}** ({member.id}) {robot}" + _("is on:\n\n")
+                embed_msg = ""
+                for m in guild_list:
+                    # m = guild.get_member(member.id)
+                    is_owner = ""
+                    nick = ""
+                    if m.id == m.guild.owner_id:
+                        is_owner = "\N{CROWN}"
+                    if m.nick:
+                        nick = f"`{m.nick}` in"
+                    msg += f"{is_owner}{nick} __{m.guild.name}__ ({m.guild.id})\n\n"
+                    embed_msg += f"{is_owner}{nick} __{m.guild.name}__ ({m.guild.id})\n\n"
+                if ctx.channel.permissions_for(ctx.me).embed_links:
+                    for em in pagify(embed_msg, ["\n"], page_length=6000):
+                        embed = discord.Embed()
+                        since_created = (ctx.message.created_at - member.created_at).days
+                        user_created = member.created_at.strftime("%d %b %Y %H:%M")
+                        created_on = _("Joined Discord on {}\n({} days ago)").format(
+                            user_created, since_created
+                        )
+                        embed.description = created_on
+                        embed.set_thumbnail(url=member.avatar_url)
+                        embed.colour = await ctx.embed_colour()
+                        embed.set_author(
+                            name=f"{member} ({member.id}) {robot}", icon_url=member.avatar_url
+                        )
+                        for page in pagify(em, ["\n"], page_length=1024):
+                            embed.add_field(name=_("Shared Servers"), value=page)
+                        embed_list.append(embed)
+                else:
+                    for page in pagify(msg, ["\n"]):
+                        embed_list.append(page)
             else:
-                msg = f"**{member}** ({member.id}) " + _("is not in any shared servers!")
-                await ctx.send(msg)
+                if ctx.channel.permissions_for(ctx.me).embed_links:
+                    embed = discord.Embed()
+                    since_created = (ctx.message.created_at - member.created_at).days
+                    user_created = member.created_at.strftime("%d %b %Y %H:%M")
+                    created_on = _("Joined Discord on {}\n({} days ago)").format(
+                        user_created, since_created
+                    )
+                    embed.description = created_on
+                    embed.set_thumbnail(url=member.avatar_url)
+                    embed.colour = await ctx.embed_colour()
+                    embed.set_author(
+                        name=f"{member} ({member.id}) {robot}", icon_url=member.avatar_url
+                    )
+                    embed_list.append(embed)
+                else:
+                    msg = f"**{member}** ({member.id}) " + _("is not in any shared servers!")
+                    embed_list.append(msg)
+            await BaseMenu(
+                source=ListPages(pages=embed_list),
+                delete_message_after=False,
+                clear_reactions_after=True,
+                timeout=60,
+                cog=self,
+                page_start=0,
+            ).start(ctx=ctx)
 
     @commands.command(hidden=True)
     @checks.is_owner()
@@ -1174,7 +1312,9 @@ class ServerStats(commands.Cog):
     @staticmethod
     async def confirm_leave_guild(ctx: commands.Context, guild) -> None:
         await ctx.send(
-            _("Are you sure you want me to leave {guild}? (reply yes or no)").format(guild=guild.name)
+            _("Are you sure you want me to leave {guild}? (reply yes or no)").format(
+                guild=guild.name
+            )
         )
         pred = MessagePredicate.yes_or_no(ctx)
         await ctx.bot.wait_for("message", check=pred)
@@ -1243,24 +1383,25 @@ class ServerStats(commands.Cog):
 
         `guild_name` can be either the server ID or partial name
         """
-        if not ctx.guild and not await ctx.bot.is_owner(ctx.author):
-            return await ctx.send(_("This command is not available in DM."))
-        guilds = [ctx.guild]
-        page = 0
-        if await ctx.bot.is_owner(ctx.author):
-            page = ctx.bot.guilds.index(ctx.guild)
-            guilds = ctx.bot.guilds
-            if guild:
-                page = ctx.bot.guilds.index(guild)
+        async with ctx.typing():
+            if not ctx.guild and not await ctx.bot.is_owner(ctx.author):
+                return await ctx.send(_("This command is not available in DM."))
+            guilds = [ctx.guild]
+            page = 0
+            if await ctx.bot.is_owner(ctx.author):
+                page = ctx.bot.guilds.index(ctx.guild)
+                guilds = ctx.bot.guilds
+                if guild:
+                    page = ctx.bot.guilds.index(guild)
 
-        await BaseMenu(
-            source=GuildPages(guilds=guilds),
-            delete_message_after=False,
-            clear_reactions_after=True,
-            timeout=60,
-            cog=self,
-            page_start=page,
-        ).start(ctx=ctx)
+            await BaseMenu(
+                source=GuildPages(guilds=guilds),
+                delete_message_after=False,
+                clear_reactions_after=True,
+                timeout=60,
+                cog=self,
+                page_start=page,
+            ).start(ctx=ctx)
 
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
@@ -1271,18 +1412,19 @@ class ServerStats(commands.Cog):
 
         `guild_name` can be either the server ID or partial name
         """
-        page = 0
-        if not guilds:
-            guilds = ctx.bot.guilds
-            page = ctx.bot.guilds.index(ctx.guild)
-        await BaseMenu(
-            source=GuildPages(guilds=guilds),
-            delete_message_after=False,
-            clear_reactions_after=True,
-            timeout=60,
-            cog=self,
-            page_start=page,
-        ).start(ctx=ctx)
+        async with ctx.typing():
+            page = 0
+            if not guilds:
+                guilds = ctx.bot.guilds
+                page = ctx.bot.guilds.index(ctx.guild)
+            await BaseMenu(
+                source=GuildPages(guilds=guilds),
+                delete_message_after=False,
+                clear_reactions_after=True,
+                timeout=60,
+                cog=self,
+                page_start=page,
+            ).start(ctx=ctx)
 
     @commands.command()
     @commands.guild_only()
@@ -1351,34 +1493,35 @@ class ServerStats(commands.Cog):
         Gets a list of all reactions from specified message and displays the user ID,
         Username, and Discriminator and the emoji name.
         """
-        new_msg = ""
-        for reaction in message.reactions:
-            async for user in reaction.users():
-                if isinstance(reaction.emoji, discord.PartialEmoji):
-                    new_msg += "{} {}#{} {}\n".format(
-                        user.id, user.name, user.discriminator, reaction.emoji.name
-                    )
-                else:
-                    new_msg += "{} {}#{} {}\n".format(
-                        user.id, user.name, user.discriminator, reaction.emoji
-                    )
-        temp_pages = []
-        pages = []
-        for page in pagify(new_msg, shorten_by=20):
-            temp_pages.append(box(page, "py"))
-        max_i = len(temp_pages)
-        i = 1
-        for page in temp_pages:
-            pages.append(f"`Page {i}/{max_i}`\n" + page)
-            i += 1
-        await BaseMenu(
-            source=ListPages(pages=pages),
-            delete_message_after=False,
-            clear_reactions_after=True,
-            timeout=60,
-            cog=self,
-            page_start=0,
-        ).start(ctx=ctx)
+        async with ctx.typing():
+            new_msg = ""
+            for reaction in message.reactions:
+                async for user in reaction.users():
+                    if isinstance(reaction.emoji, discord.PartialEmoji):
+                        new_msg += "{} {}#{} {}\n".format(
+                            user.id, user.name, user.discriminator, reaction.emoji.name
+                        )
+                    else:
+                        new_msg += "{} {}#{} {}\n".format(
+                            user.id, user.name, user.discriminator, reaction.emoji
+                        )
+            temp_pages = []
+            pages = []
+            for page in pagify(new_msg, shorten_by=20):
+                temp_pages.append(box(page, "py"))
+            max_i = len(temp_pages)
+            i = 1
+            for page in temp_pages:
+                pages.append(f"`Page {i}/{max_i}`\n" + page)
+                i += 1
+            await BaseMenu(
+                source=ListPages(pages=pages),
+                delete_message_after=False,
+                clear_reactions_after=True,
+                timeout=60,
+                cog=self,
+                page_start=0,
+            ).start(ctx=ctx)
 
     async def get_server_stats(
         self, guild: discord.Guild
@@ -1529,8 +1672,14 @@ class ServerStats(commands.Cog):
             for member_id, value in sorted_members[:5]:
                 member_messages.append(f"<@!{member_id}>: {bold(humanize_number(value))}\n")
 
-            most_messages_user_id = sorted_members[0][0]
-            most_messages_user_num = sorted_members[0][1]
+            try:
+                most_messages_user_id = sorted_members[0][0]
+            except IndexError:
+                most_messages_user_id = None
+            try:
+                most_messages_user_num = sorted_members[0][1]
+            except IndexError:
+                most_messages_user_num = 0
             new_msg = (
                 _("**Most posts on the server**\nTotal Messages: ")
                 + bold(humanize_number(guild_data["total"]))
@@ -1602,8 +1751,14 @@ class ServerStats(commands.Cog):
             log.info(channel_data)
             for member_id, value in sorted_members[:5]:
                 member_messages.append(f"<@!{member_id}>: {bold(humanize_number(value))}\n")
-            most_messages_user_id = sorted_members[0][0]
-            most_messages_user_num = sorted_members[0][1]
+            try:
+                most_messages_user_id = sorted_members[0][0]
+            except IndexError:
+                most_messages_user_id = None
+            try:
+                most_messages_user_num = sorted_members[0][1]
+            except IndexError:
+                most_messages_user_num = 0
             maybe_guild = f"<@!{most_messages_user_id}>: {bold(humanize_number(int(most_messages_user_num)))}\n"
             new_msg = (
                 _("**Most posts in <#{}>**\nTotal Messages: ").format(channel.id)

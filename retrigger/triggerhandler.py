@@ -7,7 +7,7 @@ import string
 from copy import copy
 from datetime import datetime
 from io import BytesIO
-from multiprocessing import TimeoutError
+import multiprocessing as mp
 from multiprocessing.pool import Pool
 from typing import Any, Dict, List, Literal, Pattern, Tuple, cast, Optional
 
@@ -98,6 +98,7 @@ class TriggerHandler:
             return True
         if author is author.guild.owner and "mock" not in trigger.response_type:
             return True
+        return False
 
     async def check_bw_list(self, trigger: Trigger, message: discord.Message) -> bool:
         can_run = True
@@ -332,9 +333,20 @@ class TriggerHandler:
             return
         if "guild_id" not in payload.data:
             return
+        guild = self.bot.get_guild(int(payload.data["guild_id"]))
+        if not guild:
+            return
+        if guild.id not in self.triggers:
+            return
+        if version_info >= VersionInfo.from_str("3.4.0"):
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return
+        if not any(t.check_edits for t in self.triggers[guild.id]):
+            log.debug(f"No triggers in {guild=} have check_edits enabled")
+            return
         if "bot" in payload.data["author"]:
             return
-        channel = self.bot.get_channel(int(payload.data["channel_id"]))
+        channel = guild.get_channel(int(payload.data["channel_id"]))
         try:
             message = await channel.fetch_message(int(payload.data["id"]))
         except (discord.errors.Forbidden, discord.errors.NotFound):
@@ -349,9 +361,6 @@ class TriggerHandler:
         if message.author.bot:
             # somehow we got a bot through the previous check :thonk:
             return
-        if version_info >= VersionInfo.from_str("3.4.0"):
-            if await self.bot.cog_disabled_in_guild(self, message.guild):
-                return
         await self.check_triggers(message, True)
 
     async def check_triggers(self, message: discord.Message, edit: bool) -> None:
@@ -379,7 +388,7 @@ class TriggerHandler:
         for trigger in self.triggers[guild.id]:
             if not trigger.enabled:
                 continue
-            if edit and trigger.ignore_edits:
+            if edit and not trigger.check_edits:
                 continue
             if trigger.chance:
                 if random.randint(0, trigger.chance) != 0:
@@ -510,7 +519,7 @@ class TriggerHandler:
             task = functools.partial(process.get, timeout=self.trigger_timeout)
             new_task = self.bot.loop.run_in_executor(None, task)
             search = await asyncio.wait_for(new_task, timeout=self.trigger_timeout + 5)
-        except TimeoutError:
+        except mp.TimeoutError:
             error_msg = (
                 "ReTrigger: regex process took too long. Removing from memory "
                 f"{guild.name} ({guild.id}) Author {trigger.author} "
@@ -526,6 +535,8 @@ class TriggerHandler:
                 f"Offending regex `{trigger.regex.pattern}` Name: {trigger.name}"
             )
             log.warning(error_msg)
+            return (False, [])
+        except ValueError:
             return (False, [])
         except Exception:
             log.error(
@@ -607,12 +618,31 @@ class TriggerHandler:
             response = await self.convert_parms(message, text_response, trigger, find)
             if response and not channel.permissions_for(author).mention_everyone:
                 response = escape(response, mass_mentions=True)
-            try:
-                await channel.send(response, delete_after=trigger.delete_after)
-            except discord.errors.Forbidden:
-                log.debug(error_in, exc_info=True)
-            except Exception:
-                log.error(error_in, exc_info=True)
+            if version_info >= VersionInfo.from_str("3.4.6") and trigger.reply is not None:
+                try:
+                    await channel.send(
+                        response,
+                        tts=trigger.tts,
+                        delete_after=trigger.delete_after,
+                        reference=message,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
+            else:
+                try:
+                    await channel.send(
+                        response,
+                        tts=trigger.tts,
+                        delete_after=trigger.delete_after,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
 
         if "randtext" in trigger.response_type and own_permissions.send_messages:
             await channel.trigger_typing()
@@ -622,12 +652,29 @@ class TriggerHandler:
             )
             if crand_text_response and not channel.permissions_for(author).mention_everyone:
                 crand_text_response = escape(crand_text_response, mass_mentions=True)
-            try:
-                await channel.send(crand_text_response)
-            except discord.errors.Forbidden:
-                log.debug(error_in, exc_info=True)
-            except Exception:
-                log.error(error_in, exc_info=True)
+            if version_info >= VersionInfo.from_str("3.4.6") and trigger.reply is not None:
+                try:
+                    await channel.send(
+                        crand_text_response,
+                        tts=trigger.tts,
+                        reference=message,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
+            else:
+                try:
+                    await channel.send(
+                        crand_text_response,
+                        tts=trigger.tts,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
 
         if "image" in trigger.response_type and own_permissions.attach_files:
             await channel.trigger_typing()
@@ -640,12 +687,31 @@ class TriggerHandler:
                 )
             if image_text_response and not channel.permissions_for(author).mention_everyone:
                 image_text_response = escape(image_text_response, mass_mentions=True)
-            try:
-                await channel.send(image_text_response, file=file)
-            except discord.errors.Forbidden:
-                log.debug(error_in, exc_info=True)
-            except Exception:
-                log.error(error_in, exc_info=True)
+            if version_info >= VersionInfo.from_str("3.4.6") and trigger.reply is not None:
+                try:
+                    await channel.send(
+                        image_text_response,
+                        tts=trigger.tts,
+                        file=file,
+                        reference=message,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
+            else:
+                try:
+                    await channel.send(
+                        image_text_response,
+                        tts=trigger.tts,
+                        file=file,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
 
         if "randimage" in trigger.response_type and own_permissions.attach_files:
             await channel.trigger_typing()
@@ -660,12 +726,31 @@ class TriggerHandler:
 
             if rimage_text_response and not channel.permissions_for(author).mention_everyone:
                 rimage_text_response = escape(rimage_text_response, mass_mentions=True)
-            try:
-                await channel.send(rimage_text_response, file=file)
-            except discord.errors.Forbidden:
-                log.debug(error_in, exc_info=True)
-            except Exception:
-                log.error(error_in, exc_info=True)
+            if version_info >= VersionInfo.from_str("3.4.6") and trigger.reply is not None:
+                try:
+                    await channel.send(
+                        rimage_text_response,
+                        tts=trigger.tts,
+                        file=file,
+                        reference=message,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
+            else:
+                try:
+                    await channel.send(
+                        rimage_text_response,
+                        tts=trigger.tts,
+                        file=file,
+                        allowed_mentions=trigger.allowed_mentions(),
+                    )
+                except discord.errors.Forbidden:
+                    log.debug(error_in, exc_info=True)
+                except Exception:
+                    log.error(error_in, exc_info=True)
 
         if "dm" in trigger.response_type:
             if trigger.multi_payload:
@@ -674,7 +759,7 @@ class TriggerHandler:
                 dm_response = str(trigger.text)
             response = await self.convert_parms(message, dm_response, trigger, find)
             try:
-                await author.send(response)
+                await author.send(response, allowed_mentions=trigger.allowed_mentions())
             except discord.errors.Forbidden:
                 log.debug(error_in, exc_info=True)
             except Exception:
@@ -693,7 +778,7 @@ class TriggerHandler:
                 except Exception:
                     log.error(error_in, exc_info=True)
             try:
-                await trigger_author.send(response)
+                await trigger_author.send(response, allowed_mentions=trigger.allowed_mentions())
             except discord.errors.Forbidden:
                 trigger.enabled = False
                 log.debug(error_in, exc_info=True)

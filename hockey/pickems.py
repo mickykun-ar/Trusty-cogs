@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import aiohttp
 import discord
 from redbot.core.i18n import Translator
+from redbot.core.utils import AsyncIter
 
 from .constants import TEAMS
 from .errors import NotAValidTeamError, UserHasVotedError, VotingHasEndedError
@@ -51,6 +52,9 @@ class Pickems:
         self.winner = kwargs.get("winner")
         self.name = kwargs.get("name")
         self.link = kwargs.get("link")
+
+    def __repr__(self):
+        return "<Pickems home_team={0.home_team} away_team={0.away_team} name={0.name} >".format(self)
 
     def add_vote(self, user_id, team):
         time_now = datetime.utcnow()
@@ -167,7 +171,7 @@ class Pickems:
         for name, p in pickems.items():
             if p.home_team == game.home_team and p.away_team == game.away_team:
                 if p.game_start == game.game_start:
-                    log.debug(_("Pickem already exists, adding channel"))
+                    log.debug("Pickem already exists, adding channel")
                     old_pickem = p
                     old_name = name
 
@@ -208,7 +212,7 @@ class Pickems:
         # Reset the weekly leaderboard for all servers
         config = bot.get_cog("Hockey").config
         pickems_channels_to_delete = []
-        for guild_id in await config.all_guilds():
+        async for guild_id, data in AsyncIter((await config.all_guilds()).items(), steps=100):
             guild = bot.get_guild(id=guild_id)
             if guild is None:
                 continue
@@ -218,7 +222,7 @@ class Pickems:
                 if current_guild_pickem_channels:
                     pickems_channels_to_delete += current_guild_pickem_channels
             except Exception:
-                log.error(_("Error adding channels to delete"), exc_info=True)
+                log.error("Error adding channels to delete", exc_info=True)
             if leaderboard is None:
                 leaderboard = {}
             for user in leaderboard:
@@ -227,7 +231,7 @@ class Pickems:
         try:
             await Pickems.delete_pickems_channels(bot, pickems_channels_to_delete)
         except Exception:
-            log.error(_("Error deleting pickems Channels"), exc_info=True)
+            log.error("Error deleting pickems Channels", exc_info=True)
 
     @staticmethod
     async def create_pickems_channel(bot, name, guild):
@@ -249,7 +253,7 @@ class Pickems:
             new_chn = await guild.create_text_channel(name, category=category)
             await new_chn.send(msg)
         except discord.errors.Forbidden:
-            await config.guild(guild).pickems_category.set(None)
+            await config.guild(guild).pickems_category.clear()
             return None
         return new_chn
 
@@ -279,6 +283,7 @@ class Pickems:
     @staticmethod
     async def create_weekly_pickems_pages(bot, guilds, game_obj):
         config = bot.get_cog("Hockey").config
+        session = bot.get_cog("Hockey").session
         save_data = {}
         today = datetime.now()
         new_day = timedelta(days=1)
@@ -299,7 +304,7 @@ class Pickems:
                 else:
                     save_data[new_channel.guild.id].append(new_channel.id)
 
-            games_list = await game_obj.get_games(None, today, today)
+            games_list = await game_obj.get_games(None, today, today, session)
 
             for game in games_list:
                 for channel in data:
@@ -330,7 +335,7 @@ class Pickems:
             except discord.errors.Forbidden:
                 pass
             except Exception:
-                log.error(_("Error deleting old pickems channels"), exc_info=True)
+                log.error("Error deleting old pickems channels", exc_info=True)
 
     @staticmethod
     async def tally_leaderboard(bot):
@@ -340,13 +345,13 @@ class Pickems:
         """
         config = bot.get_cog("Hockey").config
 
-        for guild_id, pickem_list in bot.get_cog("Hockey").all_pickems.items():
+        async for guild_id, pickem_list in AsyncIter(bot.get_cog("Hockey").all_pickems.items(), steps=100):
             guild = bot.get_guild(id=int(guild_id))
             if guild is None:
                 continue
             try:
                 to_remove = []
-                for name, pickems in pickem_list.items():
+                async for name, pickems in AsyncIter(pickem_list.items(), steps=50):
                     if pickems.winner is not None:
                         to_remove.append(name)
                         leaderboard = await config.guild(guild).leaderboard()
@@ -374,7 +379,7 @@ class Pickems:
                 # [p.to_json() for p in pickem_list if p.winner is None]
                 # )
             except Exception:
-                log.error(_("Error tallying leaderboard in ") + f"{guild.name}", exc_info=True)
+                log.exception(f"Error tallying leaderboard in {guild.name}")
 
     def to_json(self) -> dict:
         return {

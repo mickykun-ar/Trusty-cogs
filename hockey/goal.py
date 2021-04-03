@@ -1,16 +1,17 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import discord
 from redbot import VersionInfo, version_info
 from redbot.core import Config
-from redbot.core.utils import bounded_gather
+from redbot.core.bot import Red
+from redbot.core.utils import bounded_gather, AsyncIter
 from redbot.core.i18n import Translator
 
 from .constants import HEADSHOT_URL, TEAMS
-from .helper import check_to_post, get_team
+from .helper import check_to_post, get_team, get_channel_obj
 
 try:
     from .oilers import Oilers
@@ -61,6 +62,9 @@ class Goal:
         self.event = kwargs.get("event")
         self.link = kwargs.get("link", None)
         self.tasks: List[asyncio.Task] = []
+
+    def __repr__(self):
+        return "<Hockey Goal team={0.team_name} id={0.goal_id} >".format(self)
 
     def to_json(self) -> dict:
         return {
@@ -135,13 +139,13 @@ class Goal:
             link=link,
         )
 
-    async def post_team_goal(self, bot, game_data):
+    async def post_team_goal(self, bot: Red, game_data):
         """
         Creates embed and sends message if a team has scored a goal
         """
         # scorer = self.headshots.format(goal["players"][0]["player"]["id"])
         post_state = ["all", game_data.home_team, game_data.away_team]
-        msg_list = {}
+        msg_list = []
         if "Edmonton Oilers" in self.team_name and "missed" not in self.event.lower():
             try:
                 hue = Oilers(bot)
@@ -151,13 +155,13 @@ class Goal:
         goal_embed = await self.goal_post_embed(game_data)
         goal_text = await self.goal_post_text(game_data)
         tasks = []
-        for channels in await bot.get_cog("Hockey").config.all_channels():
-            channel = bot.get_channel(id=channels)
-            if channel is None:
-                await bot.get_cog("Hockey").config._clear_scope(Config.CHANNEL, str(channels))
-                log.info("{} channel was removed because it no longer exists".format(channels))
+        all_channels = await bot.get_cog("Hockey").config.all_channels()
+        async for channel_id, data in AsyncIter(all_channels.items(), steps=100):
+            channel = await get_channel_obj(bot, channel_id, data)
+            if not channel:
                 continue
-            should_post = await check_to_post(bot, channel, post_state, "Goal")
+
+            should_post = await check_to_post(bot, channel, data, post_state, "Goal")
             if should_post:
                 tasks.append(self.actually_post_goal(bot, channel, goal_embed, goal_text))
         data = await bounded_gather(*tasks)
@@ -165,10 +169,12 @@ class Goal:
             if channel is None:
                 continue
             else:
-                msg_list[str(channel[0])] = channel[1]
+                msg_list.append(channel)
         return msg_list
 
-    async def actually_post_goal(self, bot, channel, goal_embed, goal_text):
+    async def actually_post_goal(
+        self, bot, channel, goal_embed, goal_text
+    ) -> Optional[Tuple[int, int, int]]:
         try:
             guild = channel.guild
             if not channel.permissions_for(guild.me).send_messages:
@@ -189,11 +195,22 @@ class Goal:
             goal_notifications = guild_notifications or channel_notifications
             publish_goals = "Goal" in await config.channel(channel).publish_states()
             allowed_mentions = {}
-            if goal_notifications:
-                log.debug(goal_notifications)
-                if version_info >= VersionInfo.from_str("3.4.0"):
+            montreal = ["Montréal Canadiens", "Montreal Canadiens"]
+
+            role = discord.utils.get(guild.roles, name=f"{self.team_name} GOAL")
+            try:
+                if self.team_name in montreal:
+                    if not role:
+                        montreal.remove(self.team_name)
+                        role = discord.utils.get(guild.roles, name=f"{montreal[0]} GOAL")
+            except Exception:
+                log.error("Error trying to find montreal goal role")
+            if version_info >= VersionInfo.from_str("3.4.0"):
+                if goal_notifications:
+                    log.debug(goal_notifications)
                     allowed_mentions = {"allowed_mentions": discord.AllowedMentions(roles=True)}
-                role = discord.utils.get(guild.roles, name=self.team_name + " GOAL")
+                else:
+                    allowed_mentions = {"allowed_mentions": discord.AllowedMentions(roles=False)}
 
             if game_day_channels is not None:
                 # We don't want to ping people in the game day channels twice
@@ -230,9 +247,9 @@ class Goal:
             else:
                 msg = await channel.send(role.mention, embed=goal_embed, **allowed_mentions)
                 # msg_list[str(channel.id)] = msg.id
-            return channel.id, msg.id
+            return channel.guild.id, channel.id, msg.id
         except Exception:
-            log.error(_("Could not post goal in "), exc_info=True)
+            log.error("Could not post goal in ", exc_info=True)
             return
 
     @staticmethod
@@ -245,29 +262,50 @@ class Goal:
         team_data = await get_team(bot, team)
         if goal not in [goal.goal_id for goal in data.goals]:
             try:
-                old_msgs = team_data["goal_id"][goal]["messages"].items()
-            except Exception:
-                log.error("Error iterating saved goals", exc_info=True)
+                old_msgs = team_data["goal_id"][goal]["messages"]
+            except KeyError:
                 return
-            for channel_id, message_id in old_msgs:
-                channel = bot.get_channel(id=int(channel_id))
+            except Exception:
+                log.exception("Error iterating saved goals")
+                return
+            for guild_id, channel_id, message_id in old_msgs:
+                guild = bot.get_guild(guild_id)
+                if not guild:
+                    continue
+                channel = guild.get_channel(int(channel_id))
                 if channel and channel.permissions_for(channel.guild.me).read_message_history:
                     try:
-                        message = await channel.fetch_message(message_id)
-                        if message is not None:
-                            await message.delete()
+                        if version_info >= VersionInfo.from_str("3.4.6"):
+                            message = channel.get_partial_message(message_id)
+                        else:
+                            message = await channel.fetch_message(message_id)
+                    except (discord.errors.NotFound, discord.errors.Forbidden):
+                        continue
                     except Exception:
-                        log.error(f"Cannot find message {str(team)} {str(goal)}", exc_info=True)
+                        log.exception(
+                            f"Error getting old goal for {str(team)} {str(goal)} in "
+                            f"{guild_id=} {channel_id=}"
+                        )
                         pass
+                    if message is not None:
+                        try:
+                            await message.delete()
+                        except (discord.errors.NotFound, discord.errors.Forbidden):
+                            pass
+                        except Exception:
+                            log.exception(
+                                f"Error getting old goal for {str(team)} {str(goal)} in "
+                                f"{guild_id=} {channel_id=}"
+                            )
                 else:
-                    log.debug(_("Channel does not have permission to read history"))
+                    log.debug("Channel does not have permission to read history")
             try:
                 team_list.remove(team_data)
                 del team_data["goal_id"][goal]
                 team_list.append(team_data)
                 await config.teams.set(team_list)
             except Exception:
-                log.error("Error removing team data", exc_info=True)
+                log.exception("Error removing teams goals")
                 return
         return
 
@@ -279,8 +317,11 @@ class Goal:
         # post_state = ["all", game_data.home_team, game_data.away_team]
         em = await self.goal_post_embed(game_data)
         tasks = []
-        for channel_id, message_id in og_msg.items():
-            channel = bot.get_channel(id=int(channel_id))
+        async for guild_id, channel_id, message_id in AsyncIter(og_msg, steps=100):
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                continue
+            channel = guild.get_channel(int(channel_id))
             if channel is None:
                 continue
             tasks.append(self.edit_goal(bot, channel, message_id, em))
@@ -292,13 +333,16 @@ class Goal:
         try:
             if not channel.permissions_for(channel.guild.me).embed_links:
                 return
-            message = await channel.fetch_message(message_id)
-            guild = message.guild
+            try:
+                if version_info >= VersionInfo.from_str("3.4.6"):
+                    message = channel.get_partial_message(message_id)
+                else:
+                    message = await channel.fetch_message(message_id)
+            except (discord.errors.NotFound, discord.errors.Forbidden):
+                return
+            guild = channel.guild
             game_day_channels = await bot.get_cog("Hockey").config.guild(guild).gdc()
-            role = None
-            for roles in guild.roles:
-                if roles.name == self.team_name + " GOAL":
-                    role = roles
+            role = discord.utils.get(guild.roles, name=self.team_name + " GOAL")
             if game_day_channels is not None:
                 # We don't want to ping people in the game day channels twice
                 if channel.id in game_day_channels:
@@ -307,8 +351,10 @@ class Goal:
                 await message.edit(embed=em)
             else:
                 await message.edit(content=role.mention, embed=em)
+        except (discord.errors.NotFound, discord.errors.Forbidden):
+            return
         except Exception:
-            log.error(_("Could not edit goal in "))
+            log.exception(f"Could not edit goal in {channel=}")
 
     async def get_shootout_display(self, game):
         """

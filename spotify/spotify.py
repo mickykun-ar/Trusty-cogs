@@ -10,6 +10,8 @@ import tekore
 from redbot.core import Config, commands
 from redbot.core.i18n import Translator, cog_i18n
 from redbot.core.utils.chat_formatting import humanize_list
+from redbot.core.utils.predicates import ReactionPredicate
+from redbot.core.utils.menus import start_adding_reactions
 
 from .helpers import (
     SPOTIFY_RE,
@@ -60,7 +62,7 @@ class Spotify(commands.Cog):
     """
 
     __author__ = ["TrustyJAID", "NeuroAssassin"]
-    __version__ = "1.5.2"
+    __version__ = "1.6.0"
 
     def __init__(self, bot):
         self.bot = bot
@@ -305,7 +307,7 @@ class Spotify(commands.Cog):
         if await self.bot.cog_disabled_in_guild(self, guild):
             return
 
-        channel = self.bot.get_channel(payload.channel_id)
+        channel = guild.get_channel(payload.channel_id)
         try:
             message = await channel.fetch_message(payload.message_id)
         except Exception:
@@ -322,6 +324,8 @@ class Spotify(commands.Cog):
                 for field in em_dict["fields"]:
                     content += " " + field["name"] + " " + field["value"]
             log.debug(content)
+        content = content.replace("🧑‍🎨", ":artist:")
+        # because discord will replace this in URI's automatically 🙄
         song_data = SPOTIFY_RE.finditer(content)
         tracks = []
         albums = []
@@ -985,7 +989,9 @@ class Spotify(commands.Cog):
                 cur = await user_spotify.playback()
                 if not cur:
                     await ctx.send(_("It appears you're not currently listening to Spotify."))
-                elif cur.is_playing and not cur.item.is_local:
+                elif isinstance(cur.item, tekore.model.FullEpisode):
+                    return await ctx.send(_("I cannot play podcasts from spotify."))
+                elif cur.is_playing and not getattr(cur.item, "is_local", False):
                     msg = copy(ctx.message)
                     msg.content = ctx.prefix + f"play {cur.item.uri}"
                     self.bot.dispatch("message", msg)
@@ -997,7 +1003,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1122,7 +1128,7 @@ class Spotify(commands.Cog):
          - `popularity` + a value from 0-100
          - `speechiness` + a value from 0-100
          - `tempo` + the tempo in BPM
-         - `time_signature` + the measure of bars
+         - `time_signature` + the measure of bars e.g. `3` for `3/4` or `6/8`
          - `valence` + a value from 0-100
         """
 
@@ -1141,7 +1147,7 @@ class Spotify(commands.Cog):
                 )
             items = search.tracks
         if not items:
-            return await ctx.send(_("No recommendations could be found that query."))
+            return await ctx.send(_("No recommendations could be found with that query."))
         if ctx.guild:
             delete_after = await self.config.guild(ctx.guild).delete_message_after()
             clear_after = await self.config.guild(ctx.guild).clear_reactions_after()
@@ -1307,7 +1313,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1344,7 +1350,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1377,7 +1383,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1410,7 +1416,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1437,6 +1443,8 @@ class Spotify(commands.Cog):
         the bot will search through your playlists and start playing
         the playlist with the closest matching name
         """
+        url_or_playlist_name = url_or_playlist_name.replace("🧑‍🎨", ":artist:")
+        # because discord will replace this in URI's automatically 🙄
         song_data = SPOTIFY_RE.finditer(url_or_playlist_name)
         tracks = []
         new_uri = ""
@@ -1513,7 +1521,8 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            log.debug("Error playing song", exc_info=True)
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1556,7 +1565,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1598,7 +1607,7 @@ class Spotify(commands.Cog):
                     cur = await user_spotify.playback()
                     if not cur:
                         return await ctx.send(
-                            _("I could not find an active device to send requests for.")
+                            _("I could not find an active device to play songs on.")
                         )
                     if cur.repeat_state == "off":
                         state = "context"
@@ -1620,7 +1629,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1649,9 +1658,7 @@ class Spotify(commands.Cog):
                 if state is None:
                     cur = await user_spotify.playback()
                     if not cur:
-                        await ctx.send(
-                            _("I could not find an active device to send requests for.")
-                        )
+                        await ctx.send(_("I could not find an active device to play songs on."))
                     state = not cur.shuffle_state
                 await user_spotify.playback_shuffle(state)
             await ctx.react_quietly(
@@ -1662,7 +1669,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1719,7 +1726,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1769,7 +1776,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1781,9 +1788,16 @@ class Spotify(commands.Cog):
                 _("An exception has occured, please contact the bot owner for more assistance.")
             )
 
-    @spotify_com.command(name="device", hidden=True)
+    @spotify_com.group(name="device")
     @commands.bot_has_permissions(add_reactions=True)
-    async def spotify_device(self, ctx: commands.Context, *, device_name: str):
+    async def spotify_device(self, ctx: commands.Context):
+        """
+        Spotify device commands
+        """
+
+    @spotify_device.command(name="transfer")
+    @commands.bot_has_permissions(add_reactions=True)
+    async def spotify_device_transfer(self, ctx: commands.Context, *, device_name: Optional[str] = None):
         """
         Change the currently playing spotify device
 
@@ -1800,16 +1814,91 @@ class Spotify(commands.Cog):
                 now = await user_spotify.playback()
                 if now and now.is_playing:
                     is_playing = True
-            for d in devices:
-                if device_name.lower() in d.name.lower():
-                    log.debug(f"Transferring playback to {d.name}")
-                    await user_spotify.playback_transfer(d.id, is_playing)
-                    await ctx.tick()
-                    break
+            new_device = None
+            if device_name:
+                for d in devices:
+                    if device_name.lower() in d.name.lower():
+                        log.debug(f"Transferring playback to {d.name}")
+                        new_device = d
+            else:
+                new_device = await self.spotify_pick_device(ctx, devices)
+            if not new_device:
+                return await ctx.send(_("I will not transfer spotify playback for you."))
+            with user_spotify.token_as(user_token):
+                await user_spotify.playback_transfer(new_device.id, is_playing)
+            await ctx.tick()
+        except tekore.Unauthorised:
+            log.debug("Error transferring playback", exc_info=True)
+            await ctx.send(_("I am not authorized to perform this action for you."))
+        except tekore.NotFound:
+            await ctx.send(_("I could not find an active device to play songs on."))
+        except tekore.Forbidden as e:
+            if "non-premium" in str(e):
+                await ctx.send(_("This action is prohibited for non-premium users."))
+            else:
+                await ctx.send(_("I couldn't perform that action for you."))
+        except tekore.HTTPError:
+            log.exception("Error grabing user info from spotify")
+            await ctx.send(
+                _("An exception has occured, please contact the bot owner for more assistance.")
+            )
+
+    async def spotify_pick_device(
+        self, ctx: commands.Context, devices: tekore.model.ModelList[tekore.model.Device]
+    ) -> Optional[tekore.model.Device]:
+        """
+        Allows a user to pick the device via reactions or message to simply transfer devices
+        """
+        devices = devices[:9]
+        devices_msg = _("React with the device you want to transfer playback to:\n")
+        for c, d in enumerate(devices):
+            devices_msg += f"{c+1}. `{d.name}` - {d.type} - {d.volume_percent}% "
+            if d.is_active:
+                devices_msg += emoji_handler.get_emoji(
+                        "playpause", ctx.channel.permissions_for(ctx.me).use_external_emojis
+                    )
+            devices_msg += "\n"
+        msg = await ctx.maybe_send_embed(devices_msg)
+        emojis = ReactionPredicate.NUMBER_EMOJIS[1:len(devices)+1]
+        start_adding_reactions(msg, emojis)
+        pred = ReactionPredicate.with_emojis(emojis, msg)
+        try:
+            await ctx.bot.wait_for("reaction_add", check=pred)
+        except asyncio.TimeoutError:
+            return None
+        else:
+            return devices[pred.result]
+
+    @spotify_device.command(name="list")
+    @commands.bot_has_permissions(add_reactions=True)
+    async def spotify_device_list(self, ctx: commands.Context):
+        """
+        List all available devices for Spotify
+        """
+        user_token = await self.get_user_auth(ctx)
+        if not user_token:
+            return await ctx.send(_("You need to authorize me to interact with spotify."))
+        try:
+            is_playing = False
+            user_spotify = tekore.Spotify(sender=self._sender)
+            with user_spotify.token_as(user_token):
+                devices = await user_spotify.playback_devices()
+                now = await user_spotify.playback()
+                if now and now.is_playing:
+                    is_playing = True
+            devices_msg = _("{author}'s Spotify Devices:\n").format(author=ctx.author.display_name)
+            for c, d in enumerate(devices):
+                devices_msg += f"{c+1}. `{d.name}` - {d.type} - {d.volume_percent}% "
+                if d.is_active:
+                    devices_msg += emoji_handler.get_emoji(
+                            "playpause", ctx.channel.permissions_for(ctx.me).use_external_emojis
+                        )
+                devices_msg += "\n"
+            await ctx.maybe_send_embed(devices_msg)
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -1979,7 +2068,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -2036,7 +2125,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -2093,7 +2182,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -2139,7 +2228,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))
@@ -2179,7 +2268,7 @@ class Spotify(commands.Cog):
         except tekore.Unauthorised:
             await ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await ctx.send(_("I could not find an active device to send requests for."))
+            await ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await ctx.send(_("This action is prohibited for non-premium users."))

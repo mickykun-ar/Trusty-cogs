@@ -444,7 +444,7 @@ class SpotifyPages(menus.PageSource):
         is_liked = cur_state[1]
         em = discord.Embed(color=discord.Colour(0x1DB954))
         self.current_track = state.item
-        if state.item.is_local:
+        if getattr(state.item, "is_local", False):
             url = "https://open.spotify.com/"
             artist_title = f"{state.item.name} by " + ", ".join(a.name for a in state.item.artists)
             image = SPOTIFY_LOGO
@@ -473,7 +473,7 @@ class SpotifyPages(menus.PageSource):
         em.set_footer(text=footer, icon_url=SPOTIFY_LOGO)
         em.description = f"[{artist_title}]({url})\n\n{album}\n{_draw_play(state)}"
         try:
-            if self.detailed and not state.item.is_local:
+            if self.detailed and not getattr(state.item, "is_local", False):
                 sp = tekore.Spotify(sender=self.sender)
                 with sp.token_as(self.user_token):
                     details = await sp.track_audio_features(state.item.id)
@@ -532,7 +532,7 @@ class SpotifyPages(menus.PageSource):
                 if not cur_state:
                     raise NotPlaying
                 is_liked = False
-                if not cur_state.item.is_local:
+                if not getattr(cur_state.item, "is_local", False):
                     song = cur_state.item.id
                     liked = await user_spotify.saved_tracks_contains([song])
                     is_liked = liked[0]
@@ -798,7 +798,7 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
                 cur = await user_spotify.playback()
                 if not cur:
                     await self.ctx.send(
-                        _("I could not find an active device to send requests for.")
+                        _("I could not find an active device to play songs on.")
                     )
                     return
                 if cur.item.id == self.source.current_track.id:
@@ -814,7 +814,7 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -848,7 +848,7 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -874,14 +874,14 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
                 cur = await user_spotify.playback()
                 if not cur:
                     await self.ctx.send(
-                        _("I could not find an active device to send requests for.")
+                        _("I could not find an active device to play songs on.")
                     )
                 state = not cur.shuffle_state
                 await user_spotify.playback_shuffle(state)
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -907,13 +907,13 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
                 cur = await user_spotify.playback()
                 if not cur:
                     await self.ctx.send(
-                        _("I could not find an active device to send requests for.")
+                        _("I could not find an active device to play songs on.")
                     )
                 await user_spotify.saved_tracks_add([self.source.current_track.id])
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -939,7 +939,7 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -966,7 +966,7 @@ class SpotifyUserMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -1182,7 +1182,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
                 cur = await user_spotify.playback()
                 if not cur:
                     await self.ctx.send(
-                        _("I could not find an active device to send requests for.")
+                        _("I could not find an active device to play songs on.")
                     )
                     return
                 if cur.item.id == self.source.current_track.id:
@@ -1198,7 +1198,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -1218,7 +1218,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
                 cur = await user_spotify.playback()
                 if not cur:
                     await self.ctx.send(
-                        _("I could not find an active device to send requests for.")
+                        _("I could not find an active device to play songs on.")
                     )
                     return
                 else:
@@ -1231,7 +1231,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -1251,7 +1251,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
                 cur = await user_spotify.playback()
                 if not cur:
                     await self.ctx.send(
-                        _("I could not find an active device to send requests for.")
+                        _("I could not find an active device to play songs on.")
                     )
                     return
                 else:
@@ -1267,7 +1267,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))
@@ -1288,7 +1288,7 @@ class SpotifySearchMenu(menus.MenuPages, inherit_buttons=False):
         except tekore.Unauthorised:
             await self.ctx.send(_("I am not authorized to perform this action for you."))
         except tekore.NotFound:
-            await self.ctx.send(_("I could not find an active device to send requests for."))
+            await self.ctx.send(_("I could not find an active device to play songs on."))
         except tekore.Forbidden as e:
             if "non-premium" in str(e):
                 await self.ctx.send(_("This action is prohibited for non-premium users."))

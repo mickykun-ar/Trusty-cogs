@@ -200,7 +200,7 @@ class TwitchAPI:
             url += f"&started_at={started_at.isoformat()}Z"
             url += f"&ended_at={datetime.utcnow().isoformat()}Z"
         data = await self.get_response(url)
-        clips = data["data"]
+        clips = data.get("data", [])
         return clips
 
     async def maybe_get_twitch_profile(
@@ -211,7 +211,7 @@ class TwitchAPI:
             try:
                 profile = await self.get_profile_from_name(twitch_name)
             except Exception:
-                log.error("{} is not a valid Twitch username".format(twitch_name))
+                log.exception("{} is not a valid Twitch username".format(twitch_name))
                 raise TwitchError("{} is not a valid Twitch username".format(twitch_name))
         else:
             # User has set their twitch ID on the bot
@@ -240,7 +240,7 @@ class TwitchAPI:
                 try:
                     profile = await self.get_profile_from_id(follow.from_id)
                 except Exception:
-                    log.error(f"Error getting twitch profile {follow.from_id}", exc_info=True)
+                    log.exception(f"Error getting twitch profile {follow.from_id}", exc_info=True)
                 log.info(
                     f"{profile.login} Followed! {followed.display_name} "
                     f"has {total} followers now."
@@ -266,7 +266,7 @@ class TwitchAPI:
         tasks = []
         created_at = datetime.strptime(clip["created_at"], "%Y-%m-%dT%H:%M:%SZ")
         age = datetime.utcnow() - created_at
-        msg = f"{clip_data['display_name']} has a new clip! {clip['url']}"
+        msg = f"{clip_data['display_name']} has a new clip!\n{clip['url']}"
         for channel, info in clip_data["channels"].items():
             channel = self.bot.get_channel(int(channel))
             if not channel:

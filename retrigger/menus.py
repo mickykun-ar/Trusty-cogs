@@ -113,7 +113,7 @@ class ReTriggerPages(menus.ListPageSource):
             )
         text_response = ""
         if trigger.ignore_commands:
-            info += _("Ignore commands: **{ignore}**\n").format(ignore=trigger.ignore_commands)
+            info += _("__Ignore commands__: **{ignore}**\n").format(ignore=trigger.ignore_commands)
         if "text" in trigger.response_type:
             if trigger.multi_payload:
                 text_response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "text")
@@ -121,6 +121,10 @@ class ReTriggerPages(menus.ListPageSource):
                 text_response = trigger.text
             if len(text_response) < 200:
                 info += _("__Text__: ") + "**{response}**\n".format(response=text_response)
+        if trigger.reply is not None:
+            info += _("__Replies with Notification__:") + "**{response}**\n".format(
+                response=trigger.reply
+            )
         if "rename" in trigger.response_type:
             if trigger.multi_payload:
                 response = "\n".join(t[1] for t in trigger.multi_payload if t[0] == "text")
@@ -188,15 +192,23 @@ class ReTriggerPages(menus.ListPageSource):
         if trigger.cooldown:
             time = trigger.cooldown["time"]
             style = trigger.cooldown["style"]
-            info += _("Cooldown: ") + "**{}s per {}**\n".format(time, style)
+            info += _("__Cooldown__: ") + "**{}s per {}**\n".format(time, style)
         if trigger.ocr_search:
-            info += _("OCR: **Enabled**\n")
-        if trigger.ignore_edits:
-            info += _("Ignoring edits: **Enabled**\n")
+            info += _("__OCR__: **Enabled**\n")
+        if trigger.check_edits:
+            info += _("__Checking edits__: **Enabled**\n")
         if trigger.delete_after:
-            info += _("Message deleted after: {time} seconds.\n").format(time=trigger.delete_after)
+            info += _("__Message deleted after__: {time} seconds.\n").format(time=trigger.delete_after)
         if trigger.read_filenames:
-            info += _("Read filenames: **Enabled**\n")
+            info += _("__Read filenames__: **Enabled**\n")
+        if trigger.user_mention:
+            info += _("__User Mentions__: **Enabled**\n")
+        if trigger.everyone_mention:
+            info += _("__Everyone Mentions__: **Enabled**\n")
+        if trigger.role_mention:
+            info += _("__Role Mentions__: **Enabled**\n")
+        if trigger.tts:
+            info += _("__TTS__: **Enabled**\n")
         if trigger.chance:
             info += _("__Chance__: **1 in {number}**\n").format(number=trigger.chance)
         if embeds:
@@ -226,7 +238,9 @@ class ReTriggerPages(menus.ListPageSource):
                     if page.startswith("```"):
                         use_box = True
                     if use_box:
-                        em.add_field(name=_("__Text__"), value=box(page.replace("```", ""), lang="text"))
+                        em.add_field(
+                            name=_("__Text__"), value=box(page.replace("```", ""), lang="text")
+                        )
                     else:
                         em.add_field(name=_("__Text__"), value=page)
             for page in pagify(trigger.regex.pattern, page_length=1000):

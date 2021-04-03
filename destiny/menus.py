@@ -1,68 +1,31 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional
 
 import discord
 
-from redbot.core import commands
-from redbot.vendored.discord.ext import menus
+# from discord.ext.commands.errors import BadArgument
+from redbot.core.commands import commands
 from redbot.core.i18n import Translator
 
-
-log = logging.getLogger("red.Trusty-cogs.serverstats")
-
-_ = Translator("serverstats", __file__)
+from redbot.core.utils.chat_formatting import pagify, humanize_list
+from redbot.vendored.discord.ext import menus
 
 
-class AvatarPages(menus.ListPageSource):
-    def __init__(self, members: List[discord.Member]):
-        super().__init__(members, per_page=1)
-
-    def is_paginating(self):
-        return True
-
-    async def format_page(self, menu: menus.MenuPages, member: discord.Member) -> discord.Embed:
-        em = discord.Embed(title=_("**Avatar**"), colour=member.colour)
-        url = str(member.avatar_url_as(static_format="png"))
-        if member.is_avatar_animated():
-            url = str(member.avatar_url_as(format="gif"))
-        em.set_image(url=url)
-        try:
-            em.set_author(
-                name=f"{member} {f'~ {member.nick}' if member.nick else ''}",
-                icon_url=url,
-                url=url,
-            )
-        except AttributeError:
-            em.set_author(name=f"{member}", icon_url=url, url=url)
-        em.set_footer(text=f"Page {menu.current_page + 1}/{self.get_max_pages()}")
-        return em
+log = logging.getLogger("red.Trusty-cogs.destiny")
+_ = Translator("Destiny", __file__)
 
 
-class GuildPages(menus.ListPageSource):
-    def __init__(self, guilds: List[discord.Guild]):
-        super().__init__(guilds, per_page=1)
-        self.guild: Optional[discord.Guild] = None
-
-    def is_paginating(self):
-        return True
-
-    async def format_page(self, menu: menus.MenuPages, guild: discord.Guild):
-        self.guild = guild
-        em = await menu.cog.guild_embed(guild)
-        em.set_footer(text=f"Page {menu.current_page + 1}/{self.get_max_pages()}")
-        return em
-
-
-class ListPages(menus.ListPageSource):
-    def __init__(self, pages: List[Union[discord.Embed, str]]):
+class BasePages(menus.ListPageSource):
+    def __init__(self, pages: list):
         super().__init__(pages, per_page=1)
 
     def is_paginating(self):
         return True
 
-    async def format_page(self, menu: menus.MenuPages, page: Union[discord.Embed, str]):
+    async def format_page(self, menu: menus.MenuPages, page):
+        page.set_footer(text=f"Page {menu.current_page + 1}/{self.get_max_pages()}")
         return page
 
 
@@ -70,12 +33,12 @@ class BaseMenu(menus.MenuPages, inherit_buttons=False):
     def __init__(
         self,
         source: menus.PageSource,
-        cog: commands.Cog,
+        cog: Optional[commands.Cog] = None,
+        page_start: Optional[int] = 0,
         clear_reactions_after: bool = True,
         delete_message_after: bool = False,
         timeout: int = 60,
         message: discord.Message = None,
-        page_start: int = 0,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -95,9 +58,34 @@ class BaseMenu(menus.MenuPages, inherit_buttons=False):
         for the interactive pagination session.
         This implementation shows the first page of the source.
         """
+        self.current_page = self.page_start
         page = await self._source.get_page(self.page_start)
         kwargs = await self._get_kwargs_from_page(page)
         return await channel.send(**kwargs)
+
+    async def update(self, payload):
+        """|coro|
+
+        Updates the menu after an event has been received.
+
+        Parameters
+        -----------
+        payload: :class:`discord.RawReactionActionEvent`
+            The reaction event that triggered this update.
+        """
+        button = self.buttons[payload.emoji]
+        if not self._running:
+            return
+
+        try:
+            if button.lock:
+                async with self._lock:
+                    if self._running:
+                        await button(self, payload)
+            else:
+                await button(self, payload)
+        except Exception as exc:
+            log.debug("Ignored exception on reaction event", exc_info=exc)
 
     async def show_checked_page(self, page_number: int) -> None:
         max_pages = self._source.get_max_pages()
@@ -134,13 +122,6 @@ class BaseMenu(menus.MenuPages, inherit_buttons=False):
         if max_pages is None:
             return True
         return max_pages <= 2
-
-    def _skip_non_guild_buttons(self) -> bool:
-        if self.ctx.author.id not in self.bot.owner_ids:
-            return True
-        if isinstance(self.source, GuildPages):
-            return False
-        return True
 
     @menus.button(
         "\N{BLACK LEFT-POINTING TRIANGLE}\N{VARIATION SELECTOR-16}",
@@ -184,19 +165,3 @@ class BaseMenu(menus.MenuPages, inherit_buttons=False):
         """stops the pagination session."""
         self.stop()
         await self.message.delete()
-
-    @menus.button("\N{OUTBOX TRAY}", skip_if=_skip_non_guild_buttons)
-    async def leave_guild_button(self, payload):
-        await self.cog.confirm_leave_guild(self.ctx, self.source.guild)
-
-    @menus.button("\N{INBOX TRAY}", skip_if=_skip_non_guild_buttons)
-    async def make_guild_invite_button(self, payload):
-        invite = await self.cog.get_guild_invite(self.source.guild)
-        if invite:
-            await self.ctx.send(str(invite))
-        else:
-            await self.ctx.send(
-                _("I cannot find or create an invite for `{guild}`").format(
-                    guild=self.source.guild.name
-                )
-            )

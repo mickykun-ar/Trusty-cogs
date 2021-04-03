@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 import discord
+from discord.ext import tasks
 from redbot.core import Config, VersionInfo, checks, commands, modlog, version_info
 from redbot.core.commands import TimedeltaConverter
 from redbot.core.i18n import Translator, cog_i18n
@@ -45,7 +46,7 @@ class ReTrigger(TriggerHandler, commands.Cog):
     """
 
     __author__ = ["TrustyJAID"]
-    __version__ = "2.17.2"
+    __version__ = "2.20.1"
 
     def __init__(self, bot):
         self.bot = bot
@@ -63,11 +64,11 @@ class ReTrigger(TriggerHandler, commands.Cog):
         }
         self.config.register_guild(**default_guild)
         self.config.register_global(trigger_timeout=1)
-        self.re_pool = Pool(maxtasksperchild=1000)
+        self.re_pool = Pool()
         self.triggers = {}
-        self.save_triggers = None
         self.__unload = self.cog_unload
         self.trigger_timeout = 1
+        self.save_loop.start()
 
     def format_help_for_context(self, ctx: commands.Context) -> str:
         """
@@ -77,12 +78,52 @@ class ReTrigger(TriggerHandler, commands.Cog):
         return f"{pre_processed}\n\nCog Version: {self.__version__}"
 
     def cog_unload(self):
+        if 218773382617890828 in self.bot.owner_ids:
+            try:
+                self.bot.remove_dev_env_value("retrigger")
+            except Exception:
+                log.exception("Error removing retrigger from dev environment.")
+                pass
         log.debug("Closing process pools.")
         self.re_pool.close()
         self.bot.loop.run_in_executor(None, self.re_pool.join)
-        self.save_triggers.cancel()
+        self.save_loop.cancel()
 
-    async def initialize(self):
+    async def save_all_triggers(self):
+        for guild_id, triggers in self.triggers.items():
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                continue
+            async with self.config.guild(guild).trigger_list() as trigger_list:
+                for trigger in triggers:
+                    try:
+                        trigger_list[trigger.name] = await trigger.to_json()
+                    except KeyError:
+                        continue
+                    await asyncio.sleep(0.1)
+
+    @tasks.loop(seconds=120)
+    async def save_loop(self):
+        await self.save_all_triggers()
+
+    @save_loop.after_loop
+    async def after_save_loop(self):
+        if self.save_loop.is_being_cancelled():
+            await self.save_all_triggers()
+
+    @save_loop.before_loop
+    async def before_save_loop(self):
+        if version_info >= VersionInfo.from_str("3.2.0"):
+            await self.bot.wait_until_red_ready()
+        else:
+            await self.bot.wait_until_ready()
+        if 218773382617890828 in self.bot.owner_ids:
+            # This doesn't work on bot startup but that's fine
+            try:
+                self.bot.add_dev_env_value("retrigger", lambda x: self)
+            except Exception:
+                log.error("Error adding retrigger to dev environment.")
+                pass
         self.trigger_timeout = await self.config.trigger_timeout()
         data = await self.config.all_guilds()
         for guild, settings in data.items():
@@ -95,26 +136,6 @@ class ReTrigger(TriggerHandler, commands.Cog):
                     # I might move this to DM the author of the trigger
                     # before this becomes actually breaking
                 self.triggers[guild].append(new_trigger)
-        self.save_triggers = asyncio.create_task(self.save_loop())
-
-    async def save_loop(self):
-        if version_info >= VersionInfo.from_str("3.2.0"):
-            await self.bot.wait_until_red_ready()
-        else:
-            await self.bot.wait_until_ready()
-        while self is self.bot.get_cog("ReTrigger"):
-            for guild_id, triggers in self.triggers.items():
-                guild = self.bot.get_guild(guild_id)
-                if not guild:
-                    continue
-                async with self.config.guild(guild).trigger_list() as trigger_list:
-                    for trigger in triggers:
-                        try:
-                            trigger_list[trigger.name]["count"] = trigger.count
-                        except KeyError:
-                            continue
-                        await asyncio.sleep(0.1)
-            await asyncio.sleep(120)
 
     @commands.group()
     @commands.guild_only()
@@ -609,9 +630,149 @@ class ReTrigger(TriggerHandler, commands.Cog):
         msg = _("Trigger {name} read filenames set to: {read_filenames}")
         await ctx.send(msg.format(name=trigger.name, read_filenames=trigger.read_filenames))
 
+    @_edit.command(name="reply", aliases=["replies"])
+    @checks.mod_or_permissions(manage_messages=True)
+    async def set_reply(
+        self, ctx: commands.Context, trigger: TriggerExists, set_to: Optional[bool] = None
+    ) -> None:
+        """
+        Set whether or not to reply to the triggered message
+
+        `<trigger>` is the name of the trigger.
+        `[set_to]` `True` will reply with a notificaiton, `False` will reply without a notification,
+        leaving this blank will clear replies entirely.
+
+        Note: This is only availabe for Red 3.4.6/discord.py 1.6.0 or greater.
+
+        See https://regex101.com/ for help building a regex pattern.
+        See `[p]retrigger explain` or click the link below for more details.
+        [For more details click here.](https://github.com/TrustyJAID/Trusty-cogs/blob/master/retrigger/README.md)
+        """
+        if type(trigger) is str:
+            return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
+        if not await self.can_edit(ctx.author, trigger):
+            return await ctx.send(_("You are not authorized to edit this trigger."))
+        trigger.reply = set_to
+        async with self.config.guild(ctx.guild).trigger_list() as trigger_list:
+            trigger_list[trigger.name] = await trigger.to_json()
+        await self.remove_trigger_from_cache(ctx.guild.id, trigger)
+        self.triggers[ctx.guild.id].append(trigger)
+        msg = _("Trigger {name} replies set to: {set_to}")
+        await ctx.send(msg.format(name=trigger.name, set_to=trigger.reply))
+
+    @_edit.command(name="tts", aliases=["texttospeech", "text-to-speech"])
+    @checks.mod_or_permissions(manage_messages=True)
+    async def set_tts(self, ctx: commands.Context, trigger: TriggerExists, set_to: bool) -> None:
+        """
+        Set whether or not to send the message with text-to-speech
+
+        `<trigger>` is the name of the trigger.
+        `[set_to]` either `true` or `false` on whether to send the text
+        reply with text-to-speech enabled.
+
+        See https://regex101.com/ for help building a regex pattern.
+        See `[p]retrigger explain` or click the link below for more details.
+        [For more details click here.](https://github.com/TrustyJAID/Trusty-cogs/blob/master/retrigger/README.md)
+        """
+        if type(trigger) is str:
+            return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
+        if not await self.can_edit(ctx.author, trigger):
+            return await ctx.send(_("You are not authorized to edit this trigger."))
+        trigger.tts = set_to
+        async with self.config.guild(ctx.guild).trigger_list() as trigger_list:
+            trigger_list[trigger.name] = await trigger.to_json()
+        await self.remove_trigger_from_cache(ctx.guild.id, trigger)
+        self.triggers[ctx.guild.id].append(trigger)
+        msg = _("Trigger {name} text-to-speech set to: {set_to}")
+        await ctx.send(msg.format(name=trigger.name, set_to=trigger.tts))
+
+    @_edit.command(name="usermention", aliases=["userping"])
+    @checks.mod_or_permissions(manage_messages=True)
+    async def set_user_mention(
+        self, ctx: commands.Context, trigger: TriggerExists, set_to: bool
+    ) -> None:
+        """
+        Set whether or not to send this trigger will mention users in the reply
+
+        `<trigger>` is the name of the trigger.
+        `[set_to]` either `true` or `false` on whether to allow this trigger
+        to actually ping the users in the message.
+
+        See https://regex101.com/ for help building a regex pattern.
+        See `[p]retrigger explain` or click the link below for more details.
+        [For more details click here.](https://github.com/TrustyJAID/Trusty-cogs/blob/master/retrigger/README.md)
+        """
+        if type(trigger) is str:
+            return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
+        if not await self.can_edit(ctx.author, trigger):
+            return await ctx.send(_("You are not authorized to edit this trigger."))
+        trigger.user_mention = set_to
+        async with self.config.guild(ctx.guild).trigger_list() as trigger_list:
+            trigger_list[trigger.name] = await trigger.to_json()
+        await self.remove_trigger_from_cache(ctx.guild.id, trigger)
+        self.triggers[ctx.guild.id].append(trigger)
+        msg = _("Trigger {name} user mentions set to: {set_to}")
+        await ctx.send(msg.format(name=trigger.name, set_to=trigger.user_mention))
+
+    @_edit.command(name="everyonemention", aliases=["everyoneping"])
+    @checks.mod_or_permissions(manage_messages=True, mention_everyone=True)
+    async def set_everyone_mention(
+        self, ctx: commands.Context, trigger: TriggerExists, set_to: bool
+    ) -> None:
+        """
+        Set whether or not to send this trigger will allow everyone mentions
+
+        `<trigger>` is the name of the trigger.
+        `[set_to]` either `true` or `false` on whether to allow this trigger
+        to actually ping everyone if the bot has correct permissions.
+
+        See https://regex101.com/ for help building a regex pattern.
+        See `[p]retrigger explain` or click the link below for more details.
+        [For more details click here.](https://github.com/TrustyJAID/Trusty-cogs/blob/master/retrigger/README.md)
+        """
+        if type(trigger) is str:
+            return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
+        if not await self.can_edit(ctx.author, trigger):
+            return await ctx.send(_("You are not authorized to edit this trigger."))
+        trigger.everyone_mention = set_to
+        async with self.config.guild(ctx.guild).trigger_list() as trigger_list:
+            trigger_list[trigger.name] = await trigger.to_json()
+        await self.remove_trigger_from_cache(ctx.guild.id, trigger)
+        self.triggers[ctx.guild.id].append(trigger)
+        msg = _("Trigger {name} everyone mentions set to: {set_to}")
+        await ctx.send(msg.format(name=trigger.name, set_to=trigger.everyone_mention))
+
+    @_edit.command(name="rolemention", aliases=["roleping"])
+    @checks.mod_or_permissions(manage_messages=True, mention_everyone=True)
+    async def set_role_mention(
+        self, ctx: commands.Context, trigger: TriggerExists, set_to: bool
+    ) -> None:
+        """
+        Set whether or not to send this trigger will allow role mentions
+
+        `<trigger>` is the name of the trigger.
+        `[set_to]` either `true` or `false` on whether to allow this trigger
+        to actually ping roles if the bot has correct permissions.
+
+        See https://regex101.com/ for help building a regex pattern.
+        See `[p]retrigger explain` or click the link below for more details.
+        [For more details click here.](https://github.com/TrustyJAID/Trusty-cogs/blob/master/retrigger/README.md)
+        """
+        if type(trigger) is str:
+            return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
+        if not await self.can_edit(ctx.author, trigger):
+            return await ctx.send(_("You are not authorized to edit this trigger."))
+        trigger.role_mention = set_to
+        async with self.config.guild(ctx.guild).trigger_list() as trigger_list:
+            trigger_list[trigger.name] = await trigger.to_json()
+        await self.remove_trigger_from_cache(ctx.guild.id, trigger)
+        self.triggers[ctx.guild.id].append(trigger)
+        msg = _("Trigger {name} role mentions set to: {set_to}")
+        await ctx.send(msg.format(name=trigger.name, set_to=trigger.role_mention))
+
     @_edit.command(name="edited")
     @checks.mod_or_permissions(manage_messages=True)
-    async def toggle_ignore_edits(self, ctx: commands.Context, trigger: TriggerExists) -> None:
+    async def toggle_check_edits(self, ctx: commands.Context, trigger: TriggerExists) -> None:
         """
         Toggle whether the bot will listen to edited messages as well as on_message for
         the specified trigger.
@@ -626,13 +787,13 @@ class ReTrigger(TriggerHandler, commands.Cog):
             return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
         if not await self.can_edit(ctx.author, trigger):
             return await ctx.send(_("You are not authorized to edit this trigger."))
-        trigger.ignore_edits = not trigger.ignore_edits
+        trigger.check_edits = not trigger.check_edits
         async with self.config.guild(ctx.guild).trigger_list() as trigger_list:
             trigger_list[trigger.name] = await trigger.to_json()
         await self.remove_trigger_from_cache(ctx.guild.id, trigger)
         self.triggers[ctx.guild.id].append(trigger)
-        msg = _("Trigger {name} ignore edits set to: {ignore_edits}")
-        await ctx.send(msg.format(name=trigger.name, ignore_edits=trigger.ignore_edits))
+        msg = _("Trigger {name} check edits set to: {ignore_edits}")
+        await ctx.send(msg.format(name=trigger.name, ignore_edits=trigger.check_edits))
 
     @_edit.command(name="text", aliases=["msg"])
     @checks.mod_or_permissions(manage_messages=True)
@@ -721,8 +882,6 @@ class ReTrigger(TriggerHandler, commands.Cog):
             return await ctx.send(_("Trigger `{name}` doesn't exist.").format(name=trigger))
         if not await self.can_edit(ctx.author, trigger):
             return await ctx.send(_("You are not authorized to edit this trigger."))
-        if trigger.multi_payload:
-            return await ctx.send(_("You cannot edit multi triggers response."))
         if "text" not in trigger.response_type:
             return await ctx.send(_("That trigger cannot be edited this way."))
         if delete_after:
@@ -788,7 +947,9 @@ class ReTrigger(TriggerHandler, commands.Cog):
         cmd_list = command.split(" ")
         existing_cmd = self.bot.get_command(cmd_list[0])
         if existing_cmd is None:
-            await ctx.send(command + _(" doesn't seem to be an available command."))
+            await ctx.send(
+                _("`{command}` doesn't seem to be an available command.").format(command=command)
+            )
             return
         if "command" not in trigger.response_type:
             return await ctx.send(_("That trigger cannot be edited this way."))
@@ -824,7 +985,7 @@ class ReTrigger(TriggerHandler, commands.Cog):
         for role in roles:
             if role >= ctx.me.top_role:
                 return await ctx.send(_("I can't assign roles higher than my own."))
-            if ctx.author.id == ctx.guild.owner.id:
+            if ctx.author.id == ctx.guild.owner_id:
                 continue
             if role >= ctx.author.top_role:
                 return await ctx.send(
@@ -987,15 +1148,15 @@ class ReTrigger(TriggerHandler, commands.Cog):
             try:
                 await ctx.bot.wait_for("reaction_add", check=pred, timeout=30)
             except asyncio.TimeoutError:
-                return await ctx.send(_("Not bypassing regex pattern filtering."))
+                return await ctx.send(_("Not bypassing safe Regex search."))
             if pred.result:
                 await self.config.guild(ctx.guild).bypass.set(bypass)
                 await ctx.tick()
             else:
-                await ctx.send(_("Not bypassing regex pattern filtering."))
+                await ctx.send(_("Not bypassing safe Regex search."))
         else:
             await self.config.guild(ctx.guild).bypass.set(bypass)
-            await ctx.send(_("Safe Regex search bypass re-enabled."))
+            await ctx.send(_("Safe Regex search re-enabled."))
 
     @retrigger.command(usage="[trigger]")
     async def list(
@@ -1477,7 +1638,9 @@ class ReTrigger(TriggerHandler, commands.Cog):
             return await ctx.send(msg)
         guild = ctx.guild
         author = ctx.message.author.id
-        new_trigger = Trigger(name, regex, ["ban"], author, created_at=ctx.message.id)
+        new_trigger = Trigger(
+            name, regex, ["ban"], author, created_at=ctx.message.id, check_edits=True
+        )
         if ctx.guild.id not in self.triggers:
             self.triggers[ctx.guild.id] = []
         self.triggers[ctx.guild.id].append(new_trigger)
@@ -1507,7 +1670,9 @@ class ReTrigger(TriggerHandler, commands.Cog):
             return await ctx.send(msg)
         guild = ctx.guild
         author = ctx.message.author.id
-        new_trigger = Trigger(name, regex, ["kick"], author, created_at=ctx.message.id)
+        new_trigger = Trigger(
+            name, regex, ["kick"], author, created_at=ctx.message.id, check_edits=True
+        )
         if ctx.guild.id not in self.triggers:
             self.triggers[ctx.guild.id] = []
         self.triggers[ctx.guild.id].append(new_trigger)
@@ -1700,6 +1865,7 @@ class ReTrigger(TriggerHandler, commands.Cog):
             author,
             read_filenames=check_filenames,
             created_at=ctx.message.id,
+            check_edits=True,
         )
         if ctx.guild.id not in self.triggers:
             self.triggers[ctx.guild.id] = []
@@ -1732,7 +1898,7 @@ class ReTrigger(TriggerHandler, commands.Cog):
         for role in roles:
             if role >= ctx.me.top_role:
                 return await ctx.send(_("I can't assign roles higher than my own."))
-            if ctx.author.id == ctx.guild.owner.id:
+            if ctx.author.id == ctx.guild.owner_id:
                 continue
             if role >= ctx.author.top_role:
                 return await ctx.send(
@@ -1775,7 +1941,7 @@ class ReTrigger(TriggerHandler, commands.Cog):
         for role in roles:
             if role >= ctx.me.top_role:
                 return await ctx.send(_("I can't remove roles higher than my own."))
-            if ctx.author.id == ctx.guild.owner.id:
+            if ctx.author.id == ctx.guild.owner_id:
                 continue
             if role >= ctx.author.top_role:
                 return await ctx.send(

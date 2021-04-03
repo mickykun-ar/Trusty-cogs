@@ -155,10 +155,27 @@ class StarboardEvents:
             )
             if message.attachments != []:
                 em.set_image(url=message.attachments[0].url)
+            if msg_ref := getattr(message, "reference", None):
+                ref_msg_chan = self.bot.get_channel(msg_ref.channel_id)
+                try:
+                    ref_msg = await ref_msg_chan.fetch_message(msg_ref.message_id)
+                    ref_text = ref_msg.system_content
+                    if len(ref_text) > 1024:
+                        ref_text = ref_text[:1021] + "..."
+                    em.add_field(
+                        name=_("Replying to {author}").format(author=ref_msg.author.display_name),
+                        value=ref_text,
+                    )
+                except Exception:
+                    pass
         em.timestamp = message.created_at
         jump_link = _("\n\n[Click Here to view context]({link})").format(link=message.jump_url)
         if em.description:
-            em.description = f"{em.description}{jump_link}"
+            with_context = f"{em.description}{jump_link}"
+            if len(with_context) > 2048:
+                em.add_field(name=_("Context"), value=jump_link)
+            else:
+                em.description = with_context
         else:
             em.description = jump_link
         em.set_footer(text=f"{channel.guild.name} | {channel.name}")
@@ -234,12 +251,11 @@ class StarboardEvents:
 
     @commands.Cog.listener()
     async def on_raw_reaction_clear(self, payload: discord.RawReactionActionEvent) -> None:
-        channel = self.bot.get_channel(id=payload.channel_id)
-        try:
-            guild = channel.guild
-        except AttributeError:
-            # DMChannels don't have guilds
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
             return
+        channel = guild.get_channel(payload.channel_id)
+
         if version_info >= VersionInfo.from_str("3.4.0"):
             if await self.bot.cog_disabled_in_guild(self, guild):
                 return
@@ -252,7 +268,7 @@ class StarboardEvents:
         # starboards = await self.config.guild(guild).starboards()
         for name, starboard in self.starboards[guild.id].items():
             # starboard = StarboardEntry.from_json(s_board)
-            star_channel = self.bot.get_channel(starboard.channel)
+            star_channel = guild.get_channel(starboard.channel)
             if not star_channel:
                 continue
             async with starboard.lock:
@@ -263,12 +279,11 @@ class StarboardEvents:
         payload: Union[discord.RawReactionActionEvent, FakePayload],
         remove: Optional[int] = None,
     ) -> None:
-        channel = self.bot.get_channel(id=payload.channel_id)
-        try:
-            guild = channel.guild
-        except AttributeError:
-            # DMChannels don't have guilds
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
             return
+        channel = guild.get_channel(payload.channel_id)
+
         if guild.id not in self.starboards:
             return
         if version_info >= VersionInfo.from_str("3.4.0"):
@@ -293,6 +308,11 @@ class StarboardEvents:
 
         star_channel = guild.get_channel(starboard.channel)
         if not star_channel:
+            return
+        if (
+            not star_channel.permissions_for(guild.me).send_messages
+            or not star_channel.permissions_for(guild.me).embed_links
+        ):
             return
         try:
             msg = await channel.fetch_message(id=payload.message_id)

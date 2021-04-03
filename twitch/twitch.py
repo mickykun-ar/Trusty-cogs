@@ -22,7 +22,7 @@ class Twitch(TwitchAPI, commands.Cog):
     """
 
     __author__ = ["TrustyJAID"]
-    __version__ = "1.3.5"
+    __version__ = "1.3.7"
 
     def __init__(self, bot):
         self.bot = bot
@@ -31,7 +31,7 @@ class Twitch(TwitchAPI, commands.Cog):
             "access_token": {},
             "twitch_accounts": [],
             "twitch_clips": {},
-            "version": "0.0.0",
+            "version": self.__version__, # default value so that migrations are skipped on new installs
         }
         user_defaults = {"id": "", "login": "", "display_name": ""}
         self.config.register_global(**global_defaults, force_registration=True)
@@ -101,6 +101,8 @@ class Twitch(TwitchAPI, commands.Cog):
                     "twitch",
                     value={"client_id": keys["client_id"], "client_secret": keys["client_secret"]},
                 )
+            except KeyError:
+                pass
         await self.config.api_key.clear()
 
     @commands.group(name="twitch")
@@ -189,7 +191,7 @@ class Twitch(TwitchAPI, commands.Cog):
         """
         Setup a channel for automatic clip notifications
 
-        `<twitch_name>` The name of the streamers who's clips you want posted
+        `<twitch_name>` The name of the streamers whose clips you want posted
         `[channel]` The channel to post clips into, if not provided will use the current channel.
         `[view_count]` The minimum view count required before posting a clip.
         `[check_back]` How far back to look back for new clips. Note: You must provide a number

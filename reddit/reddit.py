@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Optional, Mapping
 
@@ -23,7 +22,7 @@ class Reddit(commands.Cog):
     A cog to get information from the Reddit API
     """
 
-    __version__ = "1.1.0"
+    __version__ = "1.1.1"
     __author__ = ["TrustyJAID"]
 
     def __init__(self, bot):
@@ -77,7 +76,7 @@ class Reddit(commands.Cog):
                 client_secret=keys["client_secret"],
                 password=keys["password"],
                 username=keys["username"],
-                user_agent=f"TrustyCogs/{self.__version__} on {self.bot.user}",
+                user_agent=f"Trusty-cogs/{self.__version__} on {self.bot.user}",
             )
             log.debug("Logged into Reddit.")
         except Exception:
@@ -97,7 +96,8 @@ class Reddit(commands.Cog):
         new posts as an event.
         """
         try:
-            async for submission in subreddit.new.stream(skip_existing=True):
+            stream = subreddit.new.stream(skip_existing=True, max_wait=300)
+            async for submission in stream:
                 self.bot.dispatch("reddit_post", subreddit, submission)
         except aiohttp.ContentTypeError:
             log.debug("Stream recieved incorrect data type.")
@@ -128,6 +128,8 @@ class Reddit(commands.Cog):
                     continue
                 use_embed = True  # channel.id not in self.regular_embed_channels
                 contents = await make_embed_from_submission(channel, subreddit, submission)
+                if not contents:
+                    continue
                 contents["subreddit"] = subreddit
                 contents["submission"] = submission
                 tasks.append(self.post_new_submissions(channel, contents, use_embed))
@@ -174,11 +176,12 @@ class Reddit(commands.Cog):
             log.exception(msg)
 
     def cog_unload(self):
-        try:
-            self.bot.loop.create_task(self.login.close())
-            log.debug("Closed the reddit login.")
-        except Exception:
-            log.exception("Error closing the login.")
+        if self.login:
+            try:
+                self.bot.loop.create_task(self.login.close())
+                log.debug("Closed the reddit login.")
+            except Exception:
+                log.exception("Error closing the login.")
         for name, stream in self._streams.items():
             try:
                 stream.cancel()
