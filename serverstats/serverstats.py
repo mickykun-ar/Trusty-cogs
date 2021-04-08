@@ -44,7 +44,7 @@ class ServerStats(commands.Cog):
     """
 
     __author__ = ["TrustyJAID", "Preda"]
-    __version__ = "1.6.2"
+    __version__ = "1.6.6"
 
     def __init__(self, bot):
         self.bot: Red = bot
@@ -84,7 +84,7 @@ class ServerStats(commands.Cog):
                 await self.config.guild_from_id(guild_id).set(data)
 
     @commands.command()
-    @commands.bot_has_permissions(embed_links=True, add_reactions=True)
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True, embed_links=True)
     async def avatar(self, ctx: commands.Context, *, members: Optional[FuzzyMember]):
         """
         Display a users avatar in chat
@@ -751,6 +751,7 @@ class ServerStats(commands.Cog):
         pass
 
     @pruneroles.command()
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True)
     async def list(self, ctx: commands.Context, days: int, role: discord.Role = None) -> None:
         """
         List the users who have not talked in x days
@@ -981,6 +982,7 @@ class ServerStats(commands.Cog):
             await ctx.send(_("Not a cheater"))
 
     @commands.command()
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True)
     async def whois(
         self, ctx: commands.Context, *, user_id: Union[int, discord.Member, discord.User]
     ) -> None:
@@ -1011,7 +1013,9 @@ class ServerStats(commands.Cog):
             else:
                 guild_list = []
                 async for guild in AsyncIter(self.bot.guilds, steps=100):
-                    if m := guild.get_member(member.id) and guild.get_member(ctx.author.id):
+                    if not guild.get_member(ctx.author.id):
+                        continue
+                    if m := guild.get_member(member.id):
                         guild_list.append(m)
             embed_list = []
             robot = "\N{ROBOT FACE}" if member.bot else ""
@@ -1077,6 +1081,7 @@ class ServerStats(commands.Cog):
 
     @commands.command(hidden=True)
     @checks.is_owner()
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True, embed_links=True)
     async def topservers(self, ctx: commands.Context) -> None:
         """
         Lists servers by number of users and shows number of users
@@ -1090,9 +1095,12 @@ class ServerStats(commands.Cog):
                 msg_list.append(msg)
                 msg = ""
                 count = 0
-            msg += f"{escape(server.name, mass_mentions=True, formatting=True)}: `{humanize_number(server.member_count)}`\n"
+            msg += (
+                f"{escape(server.name, mass_mentions=True, formatting=True)}: "
+                f"`{humanize_number(server.member_count)}`\n"
+            )
             count += 1
-        msg_list.append(msg)
+            msg_list.append(msg)
         await BaseMenu(
             source=ListPages(pages=msg_list),
             delete_message_after=False,
@@ -1104,6 +1112,7 @@ class ServerStats(commands.Cog):
 
     @commands.command(hidden=True)
     @checks.is_owner()
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True)
     async def newservers(self, ctx: commands.Context) -> None:
         """
         Lists servers by when the bot was added to the server
@@ -1117,9 +1126,12 @@ class ServerStats(commands.Cog):
                 msg_list.append(msg)
                 msg = ""
                 count = 0
-            msg += f"{escape(server.name, mass_mentions=True, formatting=True)}: `{humanize_number(server.member_count)}`\n"
+            msg += (
+                f"{escape(server.name, mass_mentions=True, formatting=True)}: "
+                f"`{humanize_number(server.member_count)}`\n"
+            )
             count += 1
-        msg_list.append(msg)
+            msg_list.append(msg)
         await BaseMenu(
             source=ListPages(pages=msg_list),
             delete_message_after=False,
@@ -1140,20 +1152,23 @@ class ServerStats(commands.Cog):
     async def guild_name(self, ctx: commands.Context, *, name: str):
         """
         Change the server name
+
+        `<name>` The new name of the server.
         """
         reason = _("Requested by {author}").format(author=ctx.author)
         try:
             await ctx.guild.edit(name=name, reason=reason)
-        except Exception as e:
-            print(e)
-            pass
+        except Exception:
+            log.exception("Could not edit guild name")
+            return await ctx.send(_("I could not edit the servers name."))
+        await ctx.send(_("Server name set to {name}.").format(name=name))
 
     @guildedit.command(name="verificationlevel", aliases=["verification"])
     async def verifivation_level(self, ctx: commands.Context, *, level: str) -> None:
         """
         Modify the guilds verification level
 
-        `level` must be one of:
+        `<level>` must be one of:
         `none`, `low`, `medium`, `table flip`(`high`), or `double table flip`(`extreme`)
         """
 
@@ -1172,48 +1187,56 @@ class ServerStats(commands.Cog):
             return
         try:
             await ctx.guild.edit(verification_level=levels[level], reason=reason)
-        except Exception as e:
-            print(e)
-            pass
+        except Exception:
+            log.exception("Could not edit guild verification level")
+            return await ctx.send(_("I could not edit the servers verification level."))
+        await ctx.send(_("Server verification level set to {level}").format(level=level))
 
     @guildedit.command(name="systemchannel", aliases=["welcomechannel"])
     async def system_channel(
-        self, ctx: commands.Context, channel: discord.TextChannel = None
+        self, ctx: commands.Context, channel: Optional[discord.TextChannel] = None
     ) -> None:
         """
         Change the system channel
 
         This is the default discord welcome channel.
+        `[channel]` The channel you want to set as the system channel.
+        If not provided will be set to `None`.
         """
         reason = _("Requested by {author}").format(author=ctx.author)
         try:
             await ctx.guild.edit(system_channel=channel, reason=reason)
-        except Exception as e:
-            print(e)
-            pass
+        except Exception:
+            log.exception("Could not edit guild systemchannel")
+            return await ctx.send(_("I could not edit the servers systemchannel."))
+        channel_name = getattr(channel, "mention", "None")
+        await ctx.send(_("Server systemchannel set to {channel}").format(channel=channel_name))
 
     @guildedit.command(name="afkchannel")
     async def afk_channel(
-        self, ctx: commands.Context, channel: discord.VoiceChannel = None
+        self, ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None
     ) -> None:
         """
         Change the servers AFK voice channel
 
-        Defaults to no AFK channel.
+        `[channel]` The channel you want to set as the system channel.
+        If not provided will be set to `None`.
         """
         reason = _("Requested by {author}").format(author=ctx.author)
         try:
             await ctx.guild.edit(afk_channel=channel, reason=reason)
-        except Exception as e:
-            print(e)
-            pass
+        except Exception:
+            log.exception("Could not edit guild afk channel")
+            return await ctx.send(_("I could not edit the servers afk channel."))
+        channel_name = getattr(channel, "mention", "None")
+        await ctx.send(_("Server afk channel set to {channel}").format(channel=channel_name))
 
     @guildedit.command(name="afktimeout")
     async def afk_timeout(self, ctx: commands.Context, timeout: int) -> None:
         """
         Change the servers AFK timeout
 
-        `timeout` must be a value of 60, 300, 900, 1800, or 3600.
+        `<timeout>` must be a value of 60, 300, 900, 1800, or 3600.
         """
         if timeout not in [60, 300, 900, 1800, 3600]:
             await ctx.send(_("`timeout` must be a value of 60, 300, 900, 1800, or 3600."))
@@ -1221,13 +1244,15 @@ class ServerStats(commands.Cog):
         reason = _("Requested by {author}").format(author=ctx.author)
         try:
             await ctx.guild.edit(afk_timeout=timeout, reason=reason)
-        except Exception as e:
-            print(e)
-            pass
+        except Exception:
+            log.exception("Could not edit guild afk timeout")
+            return await ctx.send(_("I could not edit the servers afk timeout."))
+        await ctx.send(_("Server AFK timeout set to {timeout} seconds.").format(timeout=timeout))
 
     @commands.command()
     @commands.guild_only()
     @checks.mod_or_permissions(manage_messages=True)
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True)
     async def topmembers(
         self, ctx: commands.Context, number: int = 10, guild: GuildConverter = None
     ) -> None:
@@ -1377,6 +1402,7 @@ class ServerStats(commands.Cog):
 
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True, embed_links=True)
     async def getguild(self, ctx: commands.Context, *, guild: GuildConverter = None) -> None:
         """
         Display info about servers the bot is on
@@ -1394,18 +1420,19 @@ class ServerStats(commands.Cog):
                 if guild:
                     page = ctx.bot.guilds.index(guild)
 
-            await BaseMenu(
-                source=GuildPages(guilds=guilds),
-                delete_message_after=False,
-                clear_reactions_after=True,
-                timeout=60,
-                cog=self,
-                page_start=page,
-            ).start(ctx=ctx)
+        await BaseMenu(
+            source=GuildPages(guilds=guilds),
+            delete_message_after=False,
+            clear_reactions_after=True,
+            timeout=60,
+            cog=self,
+            page_start=page,
+        ).start(ctx=ctx)
 
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
     @checks.admin()
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True, embed_links=True)
     async def getguilds(self, ctx: commands.Context, *, guilds: MultiGuildConverter) -> None:
         """
         Display info about multiple servers
@@ -1417,14 +1444,14 @@ class ServerStats(commands.Cog):
             if not guilds:
                 guilds = ctx.bot.guilds
                 page = ctx.bot.guilds.index(ctx.guild)
-            await BaseMenu(
-                source=GuildPages(guilds=guilds),
-                delete_message_after=False,
-                clear_reactions_after=True,
-                timeout=60,
-                cog=self,
-                page_start=page,
-            ).start(ctx=ctx)
+        await BaseMenu(
+            source=GuildPages(guilds=guilds),
+            delete_message_after=False,
+            clear_reactions_after=True,
+            timeout=60,
+            cog=self,
+            page_start=page,
+        ).start(ctx=ctx)
 
     @commands.command()
     @commands.guild_only()
@@ -1444,6 +1471,7 @@ class ServerStats(commands.Cog):
     @commands.guild_only()
     @commands.command(aliases=["rolestats"])
     @checks.mod_or_permissions(manage_messages=True)
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True)
     async def getroles(self, ctx: commands.Context, *, guild: GuildConverter = None) -> None:
         """
         Displays all roles their ID and number of members in order of
@@ -1488,6 +1516,7 @@ class ServerStats(commands.Cog):
 
     @commands.command(name="getreactions", aliases=["getreaction"])
     @checks.mod_or_permissions(manage_messages=True)
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True)
     async def get_reactions(self, ctx: commands.Context, message: discord.Message) -> None:
         """
         Gets a list of all reactions from specified message and displays the user ID,
@@ -1514,14 +1543,14 @@ class ServerStats(commands.Cog):
             for page in temp_pages:
                 pages.append(f"`Page {i}/{max_i}`\n" + page)
                 i += 1
-            await BaseMenu(
-                source=ListPages(pages=pages),
-                delete_message_after=False,
-                clear_reactions_after=True,
-                timeout=60,
-                cog=self,
-                page_start=0,
-            ).start(ctx=ctx)
+        await BaseMenu(
+            source=ListPages(pages=pages),
+            delete_message_after=False,
+            clear_reactions_after=True,
+            timeout=60,
+            cog=self,
+            page_start=0,
+        ).start(ctx=ctx)
 
     async def get_server_stats(
         self, guild: discord.Guild
@@ -1748,7 +1777,6 @@ class ServerStats(commands.Cog):
                 key=lambda x: x[1],
                 reverse=True,
             )
-            log.info(channel_data)
             for member_id, value in sorted_members[:5]:
                 member_messages.append(f"<@!{member_id}>: {bold(humanize_number(value))}\n")
             try:
@@ -1775,7 +1803,7 @@ class ServerStats(commands.Cog):
 
     @commands.guild_only()
     @commands.command(aliases=["serveremojis"])
-    @commands.bot_has_permissions(embed_links=True)
+    @commands.bot_has_permissions(read_message_history=True, add_reactions=True, embed_links=True)
     async def guildemojis(
         self,
         ctx: commands.Context,

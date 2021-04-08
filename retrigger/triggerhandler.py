@@ -342,7 +342,7 @@ class TriggerHandler:
             if await self.bot.cog_disabled_in_guild(self, guild):
                 return
         if not any(t.check_edits for t in self.triggers[guild.id]):
-            log.debug(f"No triggers in {guild=} have check_edits enabled")
+            # log.debug(f"No triggers in {guild=} have check_edits enabled")
             return
         if "bot" in payload.data["author"]:
             return
@@ -941,7 +941,12 @@ class TriggerHandler:
         results = RE_POS.findall(raw_response)
         if results:
             for result in results:
-                search = trigger.regex.search(message.content)
+                content = message.content
+                if trigger.read_filenames and message.attachments:
+                    content = (
+                        message.content + " " + " ".join(f.filename for f in message.attachments)
+                    )
+                search = trigger.regex.search(content)
                 if not search:
                     continue
                 try:
@@ -980,6 +985,9 @@ class TriggerHandler:
             "guild": message.guild,
             "server": message.guild,
         }
+        if message.attachments:
+            objects["attachment"] = message.attachments[0]
+            # we can only reasonably support one attachment at a time
         if result in objects:
             return str(objects[result])
         try:
