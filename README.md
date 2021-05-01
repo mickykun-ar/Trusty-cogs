@@ -1,4 +1,4 @@
-⚠ This fork contains some cosmetic changes. Please use the original repo for your instance of Red, and do not make make any PRs or open issues for this repo.
+⚠ This fork contains some cosmetic changes. Please use the original repo for your instance of Red, and do not make make any PRs or open issues for this fork.
 
 # Trusty-cogs V3
 [![Red-DiscordBot](https://img.shields.io/badge/Red--DiscordBot-V3-red.svg)](https://github.com/Cog-Creators/Red-DiscordBot)
