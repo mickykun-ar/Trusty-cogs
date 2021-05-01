@@ -30,7 +30,7 @@ EVENT_EMOJIS = [
 class EventPoster(commands.Cog):
     """Create admin approved events/announcements"""
 
-    __version__ = "2.0.3"
+    __version__ = "2.0.4"
     __author__ = "TrustyJAID"
 
     def __init__(self, bot):
@@ -355,17 +355,22 @@ class EventPoster(commands.Cog):
             if not await self.check_clear_event(ctx):
                 return
             else:
-                to_del = 0
+                to_del = []
                 for message_id, event in self.event_cache[ctx.guild.id].items():
                     if event.hoster == ctx.author.id:
                         await event.edit(ctx, content=_("This event has ended."))
-                        to_del = event.message
+                        to_del.append(event.message)
                     async with self.config.guild(ctx.guild).events() as cur_events:
-                        del cur_events[str(event.hoster)]
-                try:
-                    del self.event_cache[ctx.guild.id][to_del]
-                except KeyError:
-                    pass
+
+                        try:
+                            del cur_events[str(event.hoster)]
+                        except KeyError:
+                            pass
+                for e in to_del:
+                    try:
+                        del self.event_cache[ctx.guild.id][e]
+                    except KeyError:
+                        pass
         if ctx.author not in members:
             members.insert(0, ctx.author)
         member_list = [m.id for m in members]
@@ -386,7 +391,7 @@ class EventPoster(commands.Cog):
             return await self.post_event(ctx, event)
 
         em = await event.make_event_embed(ctx)
-        await ctx.send(_("Please wait for an someone to approve your event request."))
+        await ctx.send(_("Please wait for someone to approve your event request."))
         admin_msg = await approval_channel.send(embed=em)
         start_adding_reactions(admin_msg, ReactionPredicate.YES_OR_NO_EMOJIS)
         pred = ReactionPredicate.yes_or_no(admin_msg)
@@ -608,8 +613,7 @@ class EventPoster(commands.Cog):
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     cur_events[str(event.hoster)] = event.to_json()
                 self.event_cache[ctx.guild.id][event.message] = event
-                await ctx.tick()
-                break
+        await ctx.tick()
 
     async def get_channels(
         self, ctx: commands.Context
@@ -660,8 +664,8 @@ class EventPoster(commands.Cog):
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     cur_events[str(event.hoster)] = event.to_json()
                 self.event_cache[ctx.guild.id][event.message] = event
-                await ctx.tick()
-                break
+        await ctx.tick()
+
 
     @event_edit.command()
     @commands.guild_only()
@@ -717,8 +721,7 @@ class EventPoster(commands.Cog):
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     cur_events[str(event.hoster)] = event.to_json()
                 self.event_cache[ctx.guild.id][event.message] = event
-                await ctx.tick()
-                break
+        await ctx.tick()
 
     @members.command(name="remove", aliases=["rem"])
     @commands.guild_only()
@@ -744,8 +747,7 @@ class EventPoster(commands.Cog):
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     cur_events[str(event.hoster)] = event.to_json()
                 self.event_cache[ctx.guild.id][event.message] = event
-                await ctx.tick()
-                break
+        await ctx.tick()
 
     @event_edit.group()
     @commands.guild_only()
@@ -777,8 +779,7 @@ class EventPoster(commands.Cog):
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     cur_events[str(event.hoster)] = event.to_json()
                 self.event_cache[ctx.guild.id][event.message] = event
-                await ctx.tick()
-                break
+        await ctx.tick()
 
     @maybe.command(name="remove", aliases=["rem"])
     @commands.guild_only()
@@ -804,8 +805,7 @@ class EventPoster(commands.Cog):
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     cur_events[str(event.hoster)] = event.to_json()
                 self.event_cache[ctx.guild.id][event.message] = event
-                await ctx.tick()
-                break
+        await ctx.tick()
 
     async def is_mod_or_admin(self, member: discord.Member) -> bool:
         guild = member.guild
@@ -898,17 +898,18 @@ class EventPoster(commands.Cog):
                 return await ctx.send(_("You cannot remove a member from someone elses event"))
             if str(hoster_or_message.id) not in await self.config.guild(ctx.guild).events():
                 return await ctx.send(_("You are not currently hosting any events."))
-            to_del = 0
+            to_del = []
             for message_id, event in self.event_cache[ctx.guild.id].items():
                 if event.hoster == hoster_or_message.id:
                     await event.edit(ctx, content=_("This event has ended."))
-                    to_del = event.message
+                    to_del.append(event.message)
                 async with self.config.guild(ctx.guild).events() as cur_events:
                     del cur_events[str(event.hoster)]
-            try:
-                del self.event_cache[ctx.guild.id][to_del]
-            except KeyError:
-                pass
+            for e in to_del:
+                try:
+                    del self.event_cache[ctx.guild.id][e]
+                except KeyError:
+                    pass
         else:
             try:
                 event = self.event_cache[ctx.guild.id][hoster_or_message.id]
@@ -916,7 +917,10 @@ class EventPoster(commands.Cog):
                 return await ctx.send(_("I could not find an event under that message."))
             await event.edit(ctx, content=_("This event has ended."))
             async with self.config.guild(ctx.guild).events() as cur_events:
-                del cur_events[str(event.hoster)]
+                try:
+                    del cur_events[str(event.hoster)]
+                except KeyError:
+                    pass
             del self.event_cache[ctx.guild.id][event.message]
         await ctx.tick()
 
