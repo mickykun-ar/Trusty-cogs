@@ -8,7 +8,7 @@ from redbot.core import Config, checks, commands
 from redbot.core.i18n import Translator, cog_i18n
 from redbot.core.utils.chat_formatting import humanize_timedelta, pagify
 
-from .converters import StarboardExists
+from .converters import StarboardExists, RealEmoji
 from .events import StarboardEvents
 from .starboard_entry import StarboardEntry, FakePayload
 from .menus import BaseMenu, StarboardPages
@@ -27,7 +27,7 @@ class Starboard(StarboardEvents, commands.Cog):
     Create a starboard to *pin* those special comments indefinitely
     """
 
-    __version__ = "2.5.0"
+    __version__ = "2.5.2"
     __author__ = "TrustyJAID"
 
     def __init__(self, bot):
@@ -124,7 +124,7 @@ class Starboard(StarboardEvents, commands.Cog):
         ctx: commands.Context,
         name: str,
         channel: Optional[discord.TextChannel] = None,
-        emoji: Union[discord.Emoji, str] = "⭐",
+        emoji: RealEmoji = "⭐",
     ) -> None:
         """
         Create a starboard on this server
@@ -157,7 +157,7 @@ class Starboard(StarboardEvents, commands.Cog):
         if name in starboards:
             await ctx.send(_("{name} starboard name is already being used").format(name=name))
             return
-        starboard = StarboardEntry(name=name, channel=channel.id, emoji=str(emoji))
+        starboard = StarboardEntry(name=name, channel=channel.id, emoji=str(emoji), guild=guild.id)
         self.starboards[guild.id][name] = starboard
         await self._save_starboards(guild)
         msg = _("Starboard set to {channel} with emoji {emoji}").format(
@@ -730,7 +730,7 @@ class Starboard(StarboardEvents, commands.Cog):
         self,
         ctx: commands.Context,
         starboard: Optional[StarboardExists],
-        emoji: Union[discord.Emoji, str],
+        emoji: RealEmoji,
     ) -> None:
         """
         Set the emoji for the starboard

@@ -52,7 +52,7 @@ class Hockey(
     Gather information and post goal updates for NHL hockey teams
     """
 
-    __version__ = "3.1.0"
+    __version__ = "3.2.1"
     __author__ = ["TrustyJAID"]
 
     def __init__(self, bot):
@@ -171,7 +171,32 @@ class Hockey(
             await self._schema_0_to_1()
             schema_version += 1
             await self.config.schema_version.set(schema_version)
+        if schema_version == 1:
+            await self._schema_1_to_2()
+            schema_version += 1
+            await self.config.schema_version.set(schema_version)
         self._ready.set()
+
+    async def _schema_1_to_2(self) -> None:
+        log.info("Adding new leaderboard keys for pickems")
+        DEFAULT_LEADERBOARD = {
+                "season": 0,
+                "weekly": 0,
+                "total": 0,
+                "playoffs": 0,
+                "playoffs_weekly": 0,
+                "playoffs_total": 0,
+                "pre-season": 0,
+                "pre-season_weekly": 0,
+                "pre-season_total": 0,
+            }
+        all_guilds = await self.pickems_config.all_guilds()
+        for guild_id in all_guilds.keys():
+            async with self.pickems_config.guild_from_id(guild_id).leaderboard() as leaderboard:
+                async for user_id, data in AsyncIter(leaderboard.items()):
+                    for key, value in DEFAULT_LEADERBOARD.items():
+                        if key not in data:
+                            leaderboard[user_id][key] = value
 
     async def _schema_0_to_1(self):
         log.info("Migrating old pickems to new file")
@@ -193,9 +218,11 @@ class Hockey(
                     pass
                 log.info(f"Migrating pickems for {guild_id}")
             if data.get("pickems_channels"):
-                await self.pickems_config.guild_from_id(guild_id).pickems_channels.set(
-                    data["pickems_channels"]
-                )
+                if not isinstance(data["pickems_channels"], list):
+                    # this is just because I don't care but should get it working
+                    await self.pickems_config.guild_from_id(guild_id).pickems_channels.set(
+                        data["pickems_channels"]
+                    )
                 try:
                     await self.config.guild_from_id(guild_id).pickems_channels.clear()
                 except Exception:

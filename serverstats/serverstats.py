@@ -45,7 +45,7 @@ class ServerStats(commands.Cog):
     """
 
     __author__ = ["TrustyJAID", "Preda"]
-    __version__ = "1.6.7"
+    __version__ = "1.6.9"
 
     def __init__(self, bot):
         self.bot: Red = bot
@@ -407,7 +407,8 @@ class ServerStats(commands.Cog):
     async def botstats(self, ctx: commands.Context) -> None:
         """Display stats about the bot"""
         async with ctx.typing():
-            servers = len(ctx.bot.guilds)
+            servers = humanize_number(len(ctx.bot.guilds))
+            members = humanize_number(len(self.bot.users))
             passed = (datetime.datetime.utcnow() - ctx.me.created_at).days
             since = ctx.me.created_at.strftime("%d %b %Y %H:%M")
             msg = _(
@@ -417,7 +418,7 @@ class ServerStats(commands.Cog):
             ).format(
                 bot=ctx.me.mention,
                 servers=servers,
-                members=len(self.bot.users),
+                members=members,
                 since=since,
                 passed=passed,
             )
@@ -1442,7 +1443,8 @@ class ServerStats(commands.Cog):
             guilds = [ctx.guild]
             page = 0
             if await ctx.bot.is_owner(ctx.author):
-                page = ctx.bot.guilds.index(ctx.guild)
+                if ctx.guild:
+                    page = ctx.bot.guilds.index(ctx.guild)
                 guilds = ctx.bot.guilds
                 if guild:
                     page = ctx.bot.guilds.index(guild)

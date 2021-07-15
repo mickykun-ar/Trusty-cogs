@@ -41,7 +41,7 @@ class Destiny(DestinyAPI, commands.Cog):
     Get information from the Destiny 2 API
     """
 
-    __version__ = "1.5.7"
+    __version__ = "1.6.1"
     __author__ = "TrustyJAID"
 
     def __init__(self, bot):
@@ -486,6 +486,8 @@ class Destiny(DestinyAPI, commands.Cog):
         try:
             await ctx.bot.wait_for("reaction_add", check=pred)
         except asyncio.TimeoutError:
+            if ctx.channel.permissions_for(ctx.me).manage_messages:
+                await msg.clear_reactions()
             return None
         else:
             return users[pred.result]
@@ -645,7 +647,51 @@ class Destiny(DestinyAPI, commands.Cog):
                 for page in pagify(data, page_length=1990):
                     await ctx.send(box(page, lang="css"))
 
-    @destiny.command()
+    @destiny.command(hidden=True)
+    @commands.bot_has_permissions(embed_links=True)
+    async def milestone(self, ctx: commands.Context, user: discord.Member = None) -> None:
+        """
+        Display a menu of your basic character's info
+        `[user]` A member on the server who has setup their account on this bot.
+        """
+        async with ctx.typing():
+            if not await self.has_oauth(ctx, user):
+                msg = _(
+                    "You need to authenticate your Bungie.net account before this command will work."
+                )
+                return await ctx.send(msg)
+            if not user:
+                user = ctx.author
+            try:
+                milestones = await self.get_milestones(user)
+                await self.save(milestones, "milestones.json")
+            except Destiny2APIError as e:
+                log.error(e, exc_info=True)
+                msg = _("I can't seem to find your Destiny profile.")
+                await ctx.send(msg)
+                return
+            msg = ""
+            for milestone_hash, content in milestones.items():
+                try:
+                    milestone_def = await self.get_definition("DestinyMilestoneDefinition", [milestone_hash])
+                except Exception:
+                    log.exception("Error pulling definition")
+                    continue
+                name = milestone_def[str(milestone_hash)].get("displayProperties", {}).get("name", "")
+                description = milestone_def[str(milestone_hash)].get("displayProperties", {}).get("description", "")
+                extras = ""
+                if "activities" in content:
+                    activities = [a["activityHash"] for a in content["activities"]]
+                    activity_data = await self.get_definition("DestinyActivityDefinition", activities)
+                    for activity_key, activity_info in activity_data.items():
+                        activity_name = activity_info.get("displayProperties", {}).get("name", "")
+                        activity_description = activity_info.get("displayProperties", {}).get("description", "")
+                        extras += f"**{activity_name}:** {activity_description}\n"
+
+                msg += f"**{name}:** {description}\n{extras}\n"
+        await ctx.send_interactive(pagify(msg))
+
+    @destiny.command(hidden=True)
     @commands.bot_has_permissions(embed_links=True)
     async def test(self, ctx: commands.Context, user: discord.Member = None) -> None:
         """
@@ -661,8 +707,20 @@ class Destiny(DestinyAPI, commands.Cog):
             if not user:
                 user = ctx.author
             try:
+                me = await self.get_aggregate_activity_history(user, "2305843009299686584")
+                await self.save(me, "aggregate_activity.json")
+                datas = {}
+                activities = [a["activityHash"] for a in me["activities"]]
+                defs = await self.get_definition("DestinyActivityDefinition", activities)
+                for key, data in defs.items():
+                    datas[str(key)] = {"name": data["displayProperties"]["name"], "role": 0}
+                await self.save(datas, "role_info.json")
+                return
                 chars = await self.get_characters(user)
                 await self.save(chars, "character.json")
+                historical_weapons = await self.get_weapon_history(user, "2305843009299686584")
+                await self.save(historical_weapons, "weapon_history.json")
+                return
             except Destiny2APIError as e:
                 log.error(e, exc_info=True)
                 msg = _("I can't seem to find your Destiny profile.")
@@ -743,6 +801,7 @@ class Destiny(DestinyAPI, commands.Cog):
                     char_class=char_class["displayProperties"]["name"],
                 )
                 titles = ""
+                embed = discord.Embed(title=info)
                 if "titleRecordHash" in char:
                     # TODO: Add fetch for Destiny.Definitions.Records.DestinyRecordDefinition
                     char_title = (
@@ -763,12 +822,15 @@ class Destiny(DestinyAPI, commands.Cog):
                         )
                         title_desc = char_title["displayProperties"]["description"]
                         titles += title_info.format(title_name=title_name, title_desc=title_desc)
+                        embed.set_thumbnail(url=IMAGE_URL + char_title["displayProperties"]["icon"])
                     except KeyError:
                         pass
-                embed = discord.Embed(title=info)
+
                 embed.set_author(name=user.display_name, icon_url=user.avatar_url)
-                if "emblemPath" in char:
-                    embed.set_thumbnail(url=IMAGE_URL + char["emblemPath"])
+                # if "emblemPath" in char:
+                # embed.set_thumbnail(url=IMAGE_URL + char["emblemPath"])
+                if "emblemBackgroundPath" in char:
+                    embed.set_image(url=IMAGE_URL + char["emblemBackgroundPath"])
                 if titles:
                     # embed.add_field(name=_("Titles"), value=titles)
                     embed.set_author(
@@ -786,7 +848,8 @@ class Destiny(DestinyAPI, commands.Cog):
                     empty = "░" * int((100 - value) / 10)
                     bar = f"{prog}{empty}"
                     if stat_hash == "1935470627":
-                        bar = ""
+                        artifact_bonus = chars["profileProgression"]["data"]["seasonalArtifact"]["powerBonus"]
+                        bar = _("Artifact Bonus: {bonus}").format(bonus=artifact_bonus)
                     stats_str += f"{stat_name}: **{value}** \n{bar}\n"
                 stats_str += _("Time Played Total: **{time}**").format(time=time_played)
                 embed.description = stats_str
@@ -1225,6 +1288,89 @@ class Destiny(DestinyAPI, commands.Cog):
                 item = item_defs[str(item_hash)]
                 if item["itemType"] in [0]:
                     continue
+                perk_str = ""
+                if str(key) in banshee["itemComponents"]["sockets"]["data"]:
+                    perk_hashes = []
+                    for perk_hash in banshee["itemComponents"]["sockets"]["data"][str(key)][
+                        "sockets"
+                    ]:
+                        if "plugHash" in perk_hash:
+                            perk_hashes.append(str(perk_hash["plugHash"]))
+                    perks = await self.get_definition(
+                        "DestinyInventoryItemLiteDefinition", perk_hashes
+                    )
+                    perk_str = "\n".join(p["displayProperties"]["name"] for k, p in perks.items())
+                try:
+                    costs = data["costs"][0]
+                    cost = item_cost_defs[str(costs["itemHash"])]
+                    cost_str = str(costs["quantity"]) + " " + cost["displayProperties"]["name"]
+                    cost_str += f"\n{perk_str}"
+                except IndexError:
+                    cost_str = "None"
+
+                embed.add_field(name=item["displayProperties"]["name"], value=cost_str)
+
+                await asyncio.sleep(0)
+        await ctx.send(embed=embed)
+
+    @destiny.command(name="ada", aliases=["ada-1"])
+    @commands.bot_has_permissions(embed_links=True)
+    async def ada_1_inventory(self, ctx: commands.Context) -> None:
+        """
+        Display Banshee-44's wares
+        """
+        async with ctx.typing():
+            if not await self.has_oauth(ctx):
+                msg = _(
+                    "You need to authenticate your Bungie.net account before this command will work."
+                )
+                return await ctx.send(msg)
+            try:
+                chars = await self.get_characters(ctx.author)
+            except Destiny2APIError:
+                # log.debug(e)
+                msg = _("I can't seem to find your Destiny profile.")
+                await ctx.send(msg)
+                return
+
+            for char_id, char in chars["characters"]["data"].items():
+                try:
+                    banshee = await self.get_vendor(ctx.author, char_id, "350061650")
+                    banshee_def = (
+                        await self.get_definition("DestinyVendorDefinition", ["350061650"])
+                    )["350061650"]
+                    await self.save(banshee, "ada-1.json")
+                except Destiny2APIError:
+                    log.error("I can't seem to see the Ada-1's wares at the moment", exc_info=True)
+                    await ctx.send(_("I can't access the Banshee-44 at the moment."))
+                    return
+                break
+            # await self.save(spider, "spider.json")
+            embed = discord.Embed(description=banshee_def["displayProperties"]["description"])
+            embed.set_thumbnail(
+                url=IMAGE_URL + banshee_def["displayProperties"]["largeTransparentIcon"]
+            )
+            embed.set_author(
+                name=banshee_def["displayProperties"]["name"]
+                + ", "
+                + banshee_def["displayProperties"]["subtitle"]
+            )
+            item_hashes = [i["itemHash"] for k, i in banshee["sales"]["data"].items()]
+            item_defs = await self.get_definition(
+                "DestinyInventoryItemLiteDefinition", item_hashes
+            )
+            item_costs = [
+                c["itemHash"] for k, i in banshee["sales"]["data"].items() for c in i["costs"]
+            ]
+            item_cost_defs = await self.get_definition(
+                "DestinyInventoryItemLiteDefinition", item_costs
+            )
+            for key, data in banshee["sales"]["data"].items():
+                item_hash = data["itemHash"]
+
+                item = item_defs[str(item_hash)]
+                if item["itemType"] in [0]:
+                    continue
                 try:
                     costs = data["costs"][0]
                     cost = item_cost_defs[str(costs["itemHash"])]
@@ -1366,7 +1512,8 @@ class Destiny(DestinyAPI, commands.Cog):
                     empty = "░" * int((100 - value) / 10)
                     bar = f"{prog}{empty}"
                     if stat_hash == "1935470627":
-                        bar = ""
+                        artifact_bonus = chars["profileProgression"]["data"]["seasonalArtifact"]["powerBonus"]
+                        bar = _("Artifact Bonus: {bonus}").format(bonus=artifact_bonus)
                     stats_str += f"{stat_name}: **{value}** \n{bar}\n"
                 embed.description = stats_str
                 embed = await self.get_char_colour(embed, char)

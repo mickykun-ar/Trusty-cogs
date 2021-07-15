@@ -160,9 +160,9 @@ class HockeyPickems(MixinMeta):
             try:
                 await user.send(reply_message)
             except discord.HTTPException:
-                log.error(f"Could not send message to {repr(user)}.")
+                log.error("Could not send message to %s.", repr(user))
             except Exception:
-                log.exception(f"Error trying to send message to {repr(user)}")
+                log.exception("Error trying to send message to %s", repr(user))
                 pass
         if emoji is not None or reply_message is not None:
             self.antispam[guild.id][channel.id][user.id].stamp()
@@ -182,7 +182,7 @@ class HockeyPickems(MixinMeta):
                 async with self.pickems_config.guild_from_id(guild_id).pickems() as data:
                     for name, pickem in pickems.items():
                         if pickem._should_save:
-                            log.debug(f"Saving pickem {repr(pickem)}")
+                            log.debug("Saving pickem %s", repr(pickem))
                             data[name] = pickem.to_json()
                         self.all_pickems[guild_id][name]._should_save = False
         except Exception:
@@ -245,7 +245,7 @@ class HockeyPickems(MixinMeta):
                 continue
             pickem = self.all_pickems[str(guild_id)][str(game.game_id)]
             if pickem.winner is not None:
-                log.debug(f"Pickems winner is not None {repr(pickem)}")
+                log.debug("Pickems winner is not None %s", repr(pickem))
                 continue
             await self.all_pickems[str(guild_id)][str(game.game_id)].check_winner(game)
             if game.game_state == pickem.game_state:
@@ -257,7 +257,7 @@ class HockeyPickems(MixinMeta):
                     channel_id, message_id = message.split("-")
                 except ValueError:
                     continue
-                if int(channel_id) not in pickems_channels:
+                if channel_id not in pickems_channels:
                     continue
                 channel = guild.get_channel(int(channel_id))
                 if not channel:
@@ -279,10 +279,10 @@ class HockeyPickems(MixinMeta):
                 message = await channel.fetch_message(message_id)
             await message.edit(content=content)
         except (discord.errors.NotFound, discord.errors.Forbidden):
-            log.error(f"Error editing pickems message in {repr(channel)}")
+            log.error("Error editing pickems message in %s", repr(channel))
             return
         except Exception:
-            log.exception(f"Error editing pickems message in {repr(channel)}")
+            log.exception("Error editing pickems message in %s", repr(channel))
 
     async def create_pickem_object(
         self,
@@ -314,10 +314,11 @@ class HockeyPickems(MixinMeta):
                 name=new_name,
                 winner=None,
                 link=game.link,
+                game_type=game.game_type,
             )
 
             self.all_pickems[str(guild.id)][str(game.game_id)] = pickem
-            log.debug(f"creating new pickems {pickems[str(game.game_id)]}")
+            log.debug("creating new pickems %s", pickems[str(game.game_id)])
             return True
         else:
             self.all_pickems[str(guild.id)][str(game.game_id)].messages.append(
@@ -364,6 +365,8 @@ class HockeyPickems(MixinMeta):
 
                 for user, data in leaderboard.items():
                     data["weekly"] = 0
+                    data["playoffs_weekly"] = 0
+                    data["pre-season_weekly"] = 0
             self.bot.loop.create_task(self.add_weekly_pickems_credits(guild, top_members))
 
     async def add_weekly_pickems_credits(
@@ -379,7 +382,7 @@ class HockeyPickems(MixinMeta):
                 try:
                     await bank.deposit_credits(member, top_credits)
                 except Exception:
-                    log.error(f"Could not add credits to {repr(member)}")
+                    log.error("Could not add credits to %s", repr(member))
 
     async def create_pickems_channel(
         self, name: str, guild: discord.Guild
@@ -456,10 +459,10 @@ class HockeyPickems(MixinMeta):
         try:
             new_msg = await channel.send(msg)
         except discord.Forbidden:
-            log.error(f"Could not send pickems message in {repr(channel)}")
+            log.error("Could not send pickems message in %s", repr(channel))
             return
         except Exception:
-            log.exception("Error sending messages in pickems channel.")
+            log.exception("Error sending messages in pickems channel %s.", repr(channel))
             return
         # Create new pickems object for the game
         try:
@@ -684,26 +687,52 @@ class HockeyPickems(MixinMeta):
                 # the main loop still get checked
             if not await pickems.check_winner(self.pickems_games[name]):
                 continue
-            log.debug(f"Tallying results for {repr(pickems)}")
+            log.debug("Tallying results for %s", repr(pickems))
             to_remove.append(name)
+            DEFAULT_LEADERBOARD = {
+                "season": 0,
+                "weekly": 0,
+                "total": 0,
+                "playoffs": 0,
+                "playoffs_weekly": 0,
+                "playoffs_total": 0,
+                "pre-season": 0,
+                "pre-season_weekly": 0,
+                "pre-season_total": 0,
+            }
             async with self.pickems_config.guild(guild).leaderboard() as leaderboard:
                 for user, choice in pickems.votes.items():
                     if str(user) not in leaderboard:
-                        leaderboard[str(user)] = {"season": 0, "weekly": 0, "total": 0}
+                        leaderboard[str(user)] = DEFAULT_LEADERBOARD.copy()
+                    for key, value in DEFAULT_LEADERBOARD.items():
+                        # verify all defaults are in the setting
+                        if key not in leaderboard[str(user)]:
+                            leaderboard[str(user)][key] = value
+
                     if choice == pickems.winner:
                         if member := guild.get_member(int(user)):
                             try:
                                 await bank.deposit_credits(member, int(base_credits))
                             except Exception:
-                                log.debug(f"Could not deposit pickems credits for {repr(member)}")
-                        if str(user) not in leaderboard:
-                            leaderboard[str(user)] = {"season": 1, "weekly": 1, "total": 0}
-                        else:
-                            leaderboard[str(user)]["season"] += 1
-                            leaderboard[str(user)]["weekly"] += 1
-                    if "total" not in leaderboard[str(user)]:
-                        leaderboard[str(user)]["total"] = 0
-                    leaderboard[str(user)]["total"] += 1
+                                log.debug("Could not deposit pickems credits for %s", repr(member))
+                        if pickems.game_type == "P":
+                            leaderboard[str(user)]["playoffs"] += 1
+                            leaderboard[str(user)]["playoffs_weekly"] += 1
+                            leaderboard[str(user)]["playoffs_total"] += 1
+                        elif pickems.game_type == "PR":
+                            leaderboard[str(user)]["pre-season"] += 1
+                            leaderboard[str(user)]["pre-season_weekly"] += 1
+                            leaderboard[str(user)]["pre-season_total"] += 1
+                        # else:
+                        leaderboard[str(user)]["season"] += 1
+                        leaderboard[str(user)]["total"] += 1
+                        # The above needs to be adjusted when this current season
+                        # playoffs is finished
+                        leaderboard[str(user)]["weekly"] += 1
+                        # Weekly reset weekly but we want to track this
+                        # regardless of playoffs and pre-season
+                        # If this causes confusion I can change it later
+                        # leaving this comment so I remember
         for name in to_remove:
             try:
                 log.debug(f"Removing pickem {name}")
@@ -1158,9 +1187,92 @@ class HockeyPickems(MixinMeta):
                     leaderboard = {}
                 for user in leaderboard:
                     leaderboard[str(user)]["season"] = 0
-            await ctx.send(_("Servers weekly leaderboard reset."))
+                    leaderboard[str(user)]["total"] = 0
+            await ctx.send(_("Servers seasonal leaderboard reset."))
         else:
             await ctx.send(_("I will not reset the pickems seasonal leaderboard in this server."))
+
+    @pickems_leaderboard_commands.command(name="clearweeklyplayoffs")
+    async def clear_weekly_playoffs_leaderboard(
+        self, ctx: commands.Context, true_or_false: bool
+    ) -> None:
+        """
+        Clears the weekly tracker on the current servers pickems
+
+        `<true_or_false>` `True` if you're sure you want to clear the settings.
+        """
+        if true_or_false:
+            async with self.pickems_config.guild(ctx.guild).leaderboard() as leaderboard:
+                if leaderboard is None:
+                    leaderboard = {}
+                for user in leaderboard:
+                    leaderboard[str(user)]["playoffs_weekly"] = 0
+            await ctx.send(_("Servers weekly playoffs leaderboard reset."))
+        else:
+            await ctx.send(
+                _("I will not reset the pickems weekly playoffs leaderboard in this server.")
+            )
+
+    @pickems_leaderboard_commands.command(name="clearplayoffs")
+    async def clear_playoffs_leaderboard(self, ctx: commands.Context, true_or_false: bool) -> None:
+        """
+        Clears the weekly tracker on the current servers pickems
+
+        `<true_or_false>` `True` if you're sure you want to clear the settings.
+        """
+        if true_or_false:
+            async with self.pickems_config.guild(ctx.guild).leaderboard() as leaderboard:
+                if leaderboard is None:
+                    leaderboard = {}
+                for user in leaderboard:
+                    leaderboard[str(user)]["playoffs"] = 0
+                    leaderboard[str(user)]["playoffs_total"] = 0
+            await ctx.send(_("Servers playoffs leaderboard reset."))
+        else:
+            await ctx.send(_("I will not reset the pickems playoffs leaderboard in this server."))
+
+    @pickems_leaderboard_commands.command(name="clearweeklypreseason")
+    async def clear_weekly_preseason_leaderboard(
+        self, ctx: commands.Context, true_or_false: bool
+    ) -> None:
+        """
+        Clears the weekly tracker on the current servers pickems
+
+        `<true_or_false>` `True` if you're sure you want to clear the settings.
+        """
+        if true_or_false:
+            async with self.pickems_config.guild(ctx.guild).leaderboard() as leaderboard:
+                if leaderboard is None:
+                    leaderboard = {}
+                for user in leaderboard:
+                    leaderboard[str(user)]["pre-season_weekly"] = 0
+            await ctx.send(_("Servers weekly pre-season leaderboard reset."))
+        else:
+            await ctx.send(
+                _("I will not reset the pickems weekly pre-season leaderboard in this server.")
+            )
+
+    @pickems_leaderboard_commands.command(name="clearpresesason")
+    async def clear_preseason_leaderboard(
+        self, ctx: commands.Context, true_or_false: bool
+    ) -> None:
+        """
+        Clears the pre-season tracker on the current servers pickems
+
+        `<true_or_false>` `True` if you're sure you want to clear the settings.
+        """
+        if true_or_false:
+            async with self.pickems_config.guild(ctx.guild).leaderboard() as leaderboard:
+                if leaderboard is None:
+                    leaderboard = {}
+                for user in leaderboard:
+                    leaderboard[str(user)]["pre-season"] = 0
+                    leaderboard[str(user)]["pre-season_total"] = 0
+            await ctx.send(_("Servers pre-season leaderboard reset."))
+        else:
+            await ctx.send(
+                _("I will not reset the pickems pre-season leaderboard in this server.")
+            )
 
     @pickems_leaderboard_commands.command(name="setuser")
     async def leaderboardset(
@@ -1168,25 +1280,41 @@ class HockeyPickems(MixinMeta):
         ctx: commands.Context,
         user: discord.Member,
         season: int,
-        weekly: int = None,
-        total: int = None,
+        weekly: int = 0,
+        total: int = 0,
     ) -> None:
         """
         Allows moderators to set a users points on the leaderboard
         """
-        if weekly is None:
-            weekly = season
-        if total is None:
-            total = season
         leaderboard = await self.config.guild(ctx.guild).leaderboard()
         if leaderboard == {} or leaderboard is None:
             await ctx.send(_("There is no current leaderboard for this server!"))
             return
         if str(user.id) not in leaderboard:
-            leaderboard[str(user.id)] = {"season": season, "weekly": weekly, "total": total}
+            leaderboard[str(user.id)] = {
+                "season": season,
+                "weekly": weekly,
+                "total": total,
+                "playoffs": 0,
+                "playoffs_weekly": 0,
+                "playoffs_total": 0,
+                "pre-season": 0,
+                "pre-season_weekly": 0,
+                "pre-season_total": 0,
+            }
         else:
             del leaderboard[str(user.id)]
-            leaderboard[str(user.id)] = {"season": season, "weekly": weekly, "total": total}
+            leaderboard[str(user.id)] = {
+                "season": season,
+                "weekly": weekly,
+                "total": total,
+                "playoffs": 0,
+                "playoffs_weekly": 0,
+                "playoffs_total": 0,
+                "pre-season": 0,
+                "pre-season_weekly": 0,
+                "pre-season_total": 0,
+            }
         await self.config.guild(ctx.guild).leaderboard.set(leaderboard)
         msg = _(
             "{user} now has {season} points on the season, "
