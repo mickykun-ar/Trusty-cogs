@@ -643,7 +643,8 @@ class EventMixin:
                 embed.add_field(name=_("Invite Link"), value=possible_link)
             embed.add_field(
                 name="ID",
-                value=f"```asciidoc\nUser :: {member.id}"
+                value=f"```asciidoc\nUser :: {member.id}```",
+                inline=False
             )
             embed.set_thumbnail(url=member.avatar_url)
             await channel.send(embed=embed)
@@ -718,7 +719,7 @@ class EventMixin:
                 url=member.avatar_url,
                 icon_url=member.avatar_url,
             )
-            embed.add_field(name="ID", value=f"```asciidoc\nUser :: {member.id}```")
+            embed.add_field(name="ID", value=f"```asciidoc\nUser :: {member.id}```", inline=False)
             embed.set_thumbnail(url=member.avatar_url)
             await channel.send(embed=embed)
         else:
@@ -735,7 +736,7 @@ class EventMixin:
             if perp:
                 msg = _(
                     "{emoji} `{time}` **{member}** (`{m_id}`) "
-                    "was kicked by {perp}. Total members: {users}"
+                    "was kicked by {perp}. Total members: **{users}**"
                 ).format(
                     emoji=self.settings[guild.id]["user_left"]["emoji"],
                     time=time.strftime("%H:%M:%S"),
